@@ -112,6 +112,17 @@ async def await_or_execute(callback: Union[Callable, Coroutine], *args) -> Any:
         return callback(*args)
 
 
+def _get_handles(entities: list[WaitableEntityType], context_stack: ExitStack):
+    handles = []
+    for entity in entities:
+        try:
+            context_stack.enter_context(entity.handle)
+            handles.append(entity.handle)
+        except InvalidHandle:
+            pass
+
+    return handles
+
 class TimeoutException(Exception):
     """Signal that a timeout occurred."""
 
@@ -636,51 +647,22 @@ class Executor(ContextManager['Executor']):
             guards.append(self._guard)
             guards.append(self._sigint_gc)
 
-            entity_count = NumberOfEntities(
-                len(subscriptions), len(guards), len(timers), len(clients), len(services))
-
             # Construct a wait set
             wait_set = None
             with ExitStack() as context_stack:
-                sub_handles = []
-                for sub in subscriptions:
-                    try:
-                        context_stack.enter_context(sub.handle)
-                        sub_handles.append(sub.handle)
-                    except InvalidHandle:
-                        entity_count.num_subscriptions -= 1
+                sub_handles = _get_handles(subscriptions, context_stack)
+                guard_handles = _get_handles(guards, context_stack)
+                timer_handles = _get_handles(timers, context_stack)
+                client_handles = _get_handles(clients, context_stack)
+                service_handles = _get_handles(services, context_stack)
 
-                client_handles = []
-                for cli in clients:
-                    try:
-                        context_stack.enter_context(cli.handle)
-                        client_handles.append(cli.handle)
-                    except InvalidHandle:
-                        entity_count.num_clients -= 1
-
-                service_handles = []
-                for srv in services:
-                    try:
-                        context_stack.enter_context(srv.handle)
-                        service_handles.append(srv.handle)
-                    except InvalidHandle:
-                        entity_count.num_services -= 1
-
-                timer_handles = []
-                for tmr in timers:
-                    try:
-                        context_stack.enter_context(tmr.handle)
-                        timer_handles.append(tmr.handle)
-                    except InvalidHandle:
-                        entity_count.num_timers -= 1
-
-                guard_handles = []
-                for gc in guards:
-                    try:
-                        context_stack.enter_context(gc.handle)
-                        guard_handles.append(gc.handle)
-                    except InvalidHandle:
-                        entity_count.num_guard_conditions -= 1
+                entity_count = NumberOfEntities(
+                    sub_handles,
+                    guard_handles,
+                    timer_handles,
+                    client_handles,
+                    service_handles
+                )
 
                 for waitable in waitables:
                     try:
@@ -698,7 +680,8 @@ class Executor(ContextManager['Executor']):
                     entity_count.num_clients,
                     entity_count.num_services,
                     entity_count.num_events,
-                    self._context.handle)
+                    self._context.handle
+                )
 
                 wait_set.clear_entities()
                 for sub_handle in sub_handles:
