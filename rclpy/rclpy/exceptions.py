@@ -155,3 +155,6 @@ class ROSInterruptException(Exception):
 
     def __init__(self) -> None:
         Exception.__init__(self, 'rclpy.shutdown() has been called')
+
+class CancelledException(BaseException):
+    """The Future or Task was cancelled."""

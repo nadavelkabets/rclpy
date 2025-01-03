@@ -20,6 +20,9 @@ from typing import (Callable, cast, Coroutine, Dict, Generator, Generic, List,
 import warnings
 import weakref
 from enum import StrEnum, auto
+    
+from rclpy.exceptions import CancelledException
+
 if TYPE_CHECKING:
     from rclpy.executors import Executor
 
@@ -74,6 +77,7 @@ class Future(Generic[T]):
         with self._lock:
             if not self.done():
                 self._state = FutureState.CANCELLED
+
         self._schedule_or_invoke_done_callbacks()
 
     def cancelled(self) -> bool:
@@ -231,6 +235,8 @@ class Task(Future[T]):
         self._executing = False
         # Lock acquired to prevent task from executing in parallel with itself
         self._task_lock = threading.Lock()
+        # True if the user requested to cancel the task
+        self._must_cancel = False
 
     def __call__(self) -> None:
         """
@@ -242,41 +248,45 @@ class Task(Future[T]):
         The return value of the handler is stored as the task result.
         """
         if (
-            self._state != FutureState.PENDING or
+            self.done() or
             self._executing or
             not self._task_lock.acquire(blocking=False)
         ):
             return
-        try:
-            if self.done():
-                return
-            self._executing = True
 
-            if inspect.iscoroutine(self._handler):
-                # Execute a coroutine
-                handler = cast(Coroutine[None, None, T], self._handler)
-                try:
+        self._executing = True
+     
+        if inspect.iscoroutine(self._handler):
+            # Execute a coroutine
+            handler = cast(Coroutine[None, None, T], self._handler)
+            try:
+                if self._must_cancel:
+                    handler.throw(CancelledException())
+                else:
                     handler.send(None)
-                except StopIteration as e:
-                    # The coroutine finished; store the result
-                    handler.close()
-                    self.set_result(e.value)
-                    self._complete_task()
-                except Exception as e:
-                    self.set_exception(e)
-                    self._complete_task()
-            else:
-                # Execute a normal function
-                try:
-                    assert self._handler is not None and callable(self._handler)
-                    self.set_result(self._handler(*self._args, **self._kwargs))
-                except Exception as e:
-                    self.set_exception(e)
-                self._complete_task()
+                return
+            except StopIteration as e:
+                # The coroutine finished; store the result
+                self.set_result(e.value)
+            except CancelledException:
+                super().cancel()
+            except Exception as e:
+                self.set_exception(e)
 
-            self._executing = False
-        finally:
-            self._task_lock.release()
+        else:
+            # Execute a normal function
+            try:
+                assert self._handler is not None and callable(self._handler)
+                self.set_result(self._handler(*self._args, **self._kwargs))
+            except Exception as e:
+                self.set_exception(e)
+        
+        self._complete_task()
+        self._executing = False
+        self._task_lock.release()
+
+    def cancel(self) -> None:
+        self._must_cancel = True
 
     def _complete_task(self) -> None:
         """Cleanup after task finished."""
