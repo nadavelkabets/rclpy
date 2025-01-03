@@ -68,7 +68,7 @@ class Future(Generic[T]):
 
     def __await__(self) -> Generator[None, None, Optional[T]]:
         # Yield if the task is not finished
-        while self._state == FutureState.PENDING:
+        while not self.done():
             yield
         return self.result()
 
@@ -104,7 +104,7 @@ class Future(Generic[T]):
 
         :return: The result set by the task, or None if no result was set.
         """
-        exception = self.exception()
+        exception = CancelledException() if self.cancelled() else self.exception()
         if exception:
             raise exception
         return self._result
