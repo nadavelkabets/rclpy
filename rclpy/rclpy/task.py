@@ -15,7 +15,6 @@
 import inspect
 import sys
 import threading
-from tkinter import E
 from typing import (Callable, cast, Coroutine, Dict, Generator, Generic, List,
                     Optional, TYPE_CHECKING, TypeVar, Union)
 import warnings
