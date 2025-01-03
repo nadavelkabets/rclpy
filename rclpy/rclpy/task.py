@@ -86,7 +86,7 @@ class Future(Generic[T]):
 
         :return: True if the task was cancelled
         """
-        return self._state != FutureState.CANCELLED
+        return self._state == FutureState.CANCELLED
 
     def done(self) -> bool:
         """
