@@ -15,6 +15,7 @@
 import inspect
 import sys
 import threading
+from tkinter import E
 from typing import (Callable, cast, Coroutine, Dict, Generator, Generic, List,
                     Optional, TYPE_CHECKING, TypeVar, Union)
 import warnings
@@ -104,7 +105,7 @@ class Future(Generic[T]):
 
         :return: The result set by the task, or None if no result was set.
         """
-        exception = CancelledException() if self.cancelled() else self.exception()
+        exception = self.exception()
         if exception:
             raise exception
         return self._result
@@ -268,7 +269,10 @@ class Task(Future[T]):
             except StopIteration as e:
                 # The coroutine finished; store the result
                 self.set_result(e.value)
-            except CancelledException:
+            except CancelledException as e:
+                with self._lock:
+                    self._exception = e
+                    self._exception_fetched = False
                 super().cancel()
             except Exception as e:
                 self.set_exception(e)
