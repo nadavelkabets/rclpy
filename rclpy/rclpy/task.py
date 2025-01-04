@@ -250,7 +250,7 @@ class Task(Future[T]):
         ):
             return
         try:
-            if self._done:
+            if self.done():
                 return
             self._executing = True
 
@@ -293,3 +293,9 @@ class Task(Future[T]):
         :return: True if the task is currently executing.
         """
         return self._executing
+
+    def cancel(self) -> None:
+        if not self.done() and inspect.iscoroutine(self._handler):
+            self._handler.close()
+
+        super().cancel()
