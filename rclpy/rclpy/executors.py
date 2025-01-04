@@ -851,10 +851,9 @@ class SingleThreadedExecutor(Executor):
             pass
         else:
             handler()
-            if handler.exception() is not None:
-                raise handler.exception()
-
-            handler.result()  # raise any exceptions
+            if entity is not None:
+                # if the task was not created by the user
+                handler.result()  # raise any exceptions
 
     def spin_once(self, timeout_sec: Optional[float] = None) -> None:
         self._spin_once_impl(timeout_sec)
