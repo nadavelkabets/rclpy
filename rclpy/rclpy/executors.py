@@ -182,6 +182,7 @@ class Executor(ContextManager['Executor']):
         self._nodes_lock = RLock()
         # Tasks to be executed (oldest first) 3-tuple Task, Entity, Node
         self._tasks: List[Tuple[Task, Optional[WaitableEntityType], Optional[Node]]] = []
+        # Prevent creating tasks while filtering old tasks
         self._tasks_lock = Lock()
         # This is triggered when wait_for_ready_callbacks should rebuild the wait list
         self._guard = GuardCondition(
@@ -608,18 +609,15 @@ class Executor(ContextManager['Executor']):
                 nodes_to_use = self.get_nodes()
 
             # Yield tasks in-progress before waiting for new work
-            tasks = None
-            with self._tasks_lock:
-                tasks = list(self._tasks)
-            if tasks:
-                for task, entity, node in tasks:
+            if self._tasks:
+                for task, entity, node in self._tasks:
                     if (not task.executing() and not task.done() and
                             (node is None or node in nodes_to_use)):
                         yielded_work = True
                         yield task, entity, node
                 with self._tasks_lock:
                     # Get rid of any tasks that are done
-                    self._tasks = list(filter(lambda t_e_n: not t_e_n[0].done(), self._tasks))
+                    self._tasks = list(filter(lambda t_e_n: not (t_e_n[0].done() and t_e_n[0].exception_claimed()), self._tasks))
 
             # Gather entities that can be waited on
             subscriptions: List[Subscription] = []
@@ -861,10 +859,6 @@ class SingleThreadedExecutor(Executor):
             pass
         else:
             handler()
-            if handler.exception() is not None:
-                raise handler.exception()
-
-            handler.result()  # raise any exceptions
 
     def spin_once(self, timeout_sec: Optional[float] = None) -> None:
         self._spin_once_impl(timeout_sec)

@@ -51,6 +51,8 @@ class Future(Generic[T]):
         # An exception raised by the handler when called
         self._exception: Optional[Exception] = None
         self._exception_fetched = False
+        # Indicates if the __await__ method was called
+        self._awaited = False
         # callbacks to be scheduled after this task completes
         self._callbacks: List[Callable[['Future[T]'], None]] = []
         # Lock for threadsafety
@@ -68,6 +70,7 @@ class Future(Generic[T]):
 
     def __await__(self) -> Generator[None, None, Optional[T]]:
         # Yield if the task is not finished
+        self._awaited = True
         while not self.done():
             yield
         return self.result()
@@ -201,6 +204,19 @@ class Future(Generic[T]):
         if invoke:
             callback(self)
 
+    def exception_claimed(self) -> bool:
+        """
+        Indicate if an outside entity claimed the result
+
+        :return: True if the task ended without exception or the exception was retrieved, False if the task is not done
+        :raises: Exception if the task ended in one and the task is not awaited or the exception was not retrieved
+        """       
+        if not self.done():
+            return False
+        if self._result or self._awaited or (self._exception and self._exception_fetched):
+            return True
+        
+        raise self._exception
 
 class Task(Future[T]):
     """
