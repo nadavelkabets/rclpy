@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import auto, StrEnum
 import inspect
 import sys
 import threading
@@ -19,7 +20,6 @@ from typing import (Callable, cast, Coroutine, Dict, Generator, Generic, List,
                     Optional, TYPE_CHECKING, TypeVar, Union)
 import warnings
 import weakref
-from enum import StrEnum, auto
 
 if TYPE_CHECKING:
     from rclpy.executors import Executor
@@ -33,7 +33,8 @@ def _fake_weakref() -> None:
 
 
 class FutureState(StrEnum):
-    """States defining the lifecycle of a future"""
+    """States defining the lifecycle of a future."""
+
     PENDING = auto()
     CANCELLED = auto()
     FINISHED = auto()
@@ -88,9 +89,9 @@ class Future(Generic[T]):
 
     def done(self) -> bool:
         """
-        Indicate if the task has finished executing.
+        Indicate if the task has finished or cancelled executing.
 
-        :return: True if the task is finished or raised while it was executing
+        :return: True if the task is finished, cancelled or raised while it was executing
         """
         return self._state != FutureState.PENDING
 

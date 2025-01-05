@@ -279,7 +279,6 @@ class TestExecutor(unittest.TestCase):
         executor.add_node(self.node)
 
         async def coroutine():
-            await asyncio.sleep(1)
             return 'Sentinel Result'
 
         future = executor.create_task(coroutine)
