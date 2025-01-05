@@ -290,7 +290,7 @@ class TestExecutor(unittest.TestCase):
         self.assertTrue(future.cancelled())
 
         executor.spin_until_future_complete(future)
-        self.assertFalse(future.done())
+        self.assertTrue(future.done())
         self.assertTrue(future.cancelled())
         self.assertEqual(None, future.result())
 
