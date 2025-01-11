@@ -127,6 +127,14 @@ class TestTask(unittest.TestCase):
         t.cancel()
         self.assertFalse(t.cancelled())
 
+    def test_cancelled_task_done(self) -> None:
+        async def await_fut():
+            await Future()
+        
+        t = Task(await_fut())
+        t.cancel()
+        self.assertFalse(t.done())
+
     def test_exception(self) -> None:
 
         def func() -> None:

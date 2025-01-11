@@ -324,8 +324,7 @@ class Executor(ContextManager['Executor']):
             while (
                 self._context.ok() and
                 not future.done() and
-                not future.cancelled()
-                and not self._is_shutdown
+                not self._is_shutdown
             ):
                 self._spin_once_until_future_complete(future, timeout_sec)
         else:
@@ -336,8 +335,7 @@ class Executor(ContextManager['Executor']):
             while (
                 self._context.ok() and
                 not future.done() and
-                not future.cancelled()
-                and not self._is_shutdown
+                not self._is_shutdown
             ):
                 self._spin_once_until_future_complete(future, timeout_left)
                 now = time.monotonic()
@@ -620,8 +618,6 @@ class Executor(ContextManager['Executor']):
                 with self._tasks_lock:
                     # Get rid of any tasks that are done
                     self._tasks = list(filter(lambda t_e_n: not t_e_n[0].done(), self._tasks))
-                    # Get rid of any tasks that are cancelled
-                    self._tasks = list(filter(lambda t_e_n: not t_e_n[0].cancelled(), self._tasks))
 
             # Gather entities that can be waited on
             subscriptions: List[Subscription] = []
