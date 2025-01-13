@@ -262,7 +262,6 @@ class Task(Future[T]):
                     handler.send(None)
                 except StopIteration as e:
                     # The coroutine finished; store the result
-                    handler.close()
                     self.set_result(e.value)
                     self._complete_task()
                 except Exception as e:
