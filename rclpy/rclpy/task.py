@@ -133,8 +133,9 @@ class Future(Generic[T]):
             if not self._pending():
                 raise RuntimeError(f"Cannot set result from state: {self._state}")
             
-        self._result = result
-        self._state = FutureState.FINISHED
+            self._result = result
+            self._state = FutureState.FINISHED
+            
         self._schedule_or_invoke_done_callbacks()
 
     def set_exception(self, exception: Exception) -> None:
@@ -147,9 +148,10 @@ class Future(Generic[T]):
             if not self._pending():
                 raise RuntimeError(f"Cannot set exception from state: {self._state}")
         
-        self._exception = exception
-        self._exception_fetched = False
-        self._state = FutureState.FINISHED
+            self._exception = exception
+            self._exception_fetched = False
+            self._state = FutureState.FINISHED
+
         self._schedule_or_invoke_done_callbacks()
 
     def _schedule_or_invoke_done_callbacks(self) -> None:
