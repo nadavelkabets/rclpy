@@ -93,7 +93,7 @@ class Future(Generic[T]):
 
         :return: True if the task is finished, cancelled or raised while it was executing
         """
-        return self._state != FutureState.PENDING
+        return self._state == FutureState.PENDING
 
     def result(self) -> Optional[T]:
         """
