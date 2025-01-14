@@ -21,7 +21,7 @@ from threading import Condition
 from threading import Lock
 from threading import RLock
 import time
-from types import TracebackType
+from types import TracebackType, coroutine
 from typing import Any
 from typing import Callable
 from typing import ContextManager
@@ -550,12 +550,8 @@ class Executor(ContextManager['Executor']):
                         gc.trigger()
                     except InvalidHandle:
                         pass
-        task = Task(
-            handler, (entity, self._guard, self._is_shutdown, self._work_tracker),
-            executor=self)
-        with self._tasks_lock:
-            self._tasks.append((task, entity, node))
-        return task
+
+        return handler(entity, self._guard, self._is_shutdown, self._work_tracker)
 
     def can_execute(self, entity: WaitableEntityType) -> bool:
         """
@@ -567,7 +563,11 @@ class Executor(ContextManager['Executor']):
         return not entity._executor_event and entity.callback_group.can_execute(entity)
 
     
-    def _construct_wait_set_and_wait(self, nodes_to_use: list['Node'], timeout_timer: Optional[Timer], timeout_nsec: int):
+    def _construct_wait_set_and_wait(
+            self, nodes_to_use: list['Node'], timeout_timer: Optional[Timer], timeout_nsec: int
+            ) -> list[Tuple[Coroutine, WaitableEntityType, 'Node']]:
+        handlers: list[Tuple[Coroutine, WaitableEntityType, 'Node']] = []
+        
         # Gather entities that can be waited on
         subscriptions: List[Subscription] = []
         guards: List[GuardCondition] = []
@@ -698,7 +698,7 @@ class Executor(ContextManager['Executor']):
                         if wt.callback_group.can_execute(wt):
                             handler = self._make_handler(wt, node, self._take_waitable)
                             yielded_work = True
-                            yield handler, wt, node
+                            handlers.append((handler, wt, node))
 
         # Process ready entities one node at a time
         for node in nodes_to_use:
@@ -709,37 +709,44 @@ class Executor(ContextManager['Executor']):
                         if tmr.callback_group.can_execute(tmr):
                             handler = self._make_handler(tmr, node, self._take_timer)
                             yielded_work = True
-                            yield handler, tmr, node
+                            handlers.append((handler, tmr, node))
 
             for sub in node.subscriptions:
                 if sub.handle.pointer in subs_ready:
                     if sub.callback_group.can_execute(sub):
                         handler = self._make_handler(sub, node, self._take_subscription)
                         yielded_work = True
-                        yield handler, sub, node
+                        handlers.append((handler, sub, node))
 
             for gc in node.guards:
                 if gc._executor_triggered:
                     if gc.callback_group.can_execute(gc):
                         handler = self._make_handler(gc, node, self._take_guard_condition)
                         yielded_work = True
-                        yield handler, gc, node
+                        handlers.append((handler, gc, node))
 
             for client in node.clients:
                 if client.handle.pointer in clients_ready:
                     if client.callback_group.can_execute(client):
                         handler = self._make_handler(client, node, self._take_client)
                         yielded_work = True
-                        yield handler, client, node
+                        handlers.append((handler, client, node))
 
             for srv in node.services:
                 if srv.handle.pointer in services_ready:
                     if srv.callback_group.can_execute(srv):
                         handler = self._make_handler(srv, node, self._take_service)
                         yielded_work = True
-                        yield handler, srv, node
+                        handlers.append((handler, srv, node))
 
-        return timers_ready
+        # Check timeout timer
+        if (
+            timeout_nsec == 0 or
+            (timeout_timer is not None and timeout_timer.handle.pointer in timers_ready)
+        ):
+            raise TimeoutException()
+        
+        return handlers
     
     def _wait_for_ready_callbacks(
         self,
@@ -786,14 +793,22 @@ class Executor(ContextManager['Executor']):
                     # Get rid of any tasks that are done
                     self._tasks = list(filter(lambda t_e_n: not t_e_n[0].done(), self._tasks))
 
-            timers_ready = yield from self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec)
+            # fix yielded_work
+            new_handlers = self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec)
+            if new_handlers:
+                yielded_work = True
+                with self._tasks_lock:
+                    for coro, entity, node in new_handlers:
+                        task = Task(coro, executor=self)
+                        self._tasks.append(
+                                (
+                                task, 
+                                entity, 
+                                node
+                                )
+                            )
+                        yield task, entity, node
 
-            # Check timeout timer
-            if (
-                timeout_nsec == 0 or
-                (timeout_timer is not None and timeout_timer.handle.pointer in timers_ready)
-            ):
-                raise TimeoutException()
         if self._is_shutdown:
             raise ShutdownException()
         if condition():
@@ -990,80 +1005,17 @@ class MultiThreadedExecutor(Executor):
 #         self._loop = asyncio.new_event_loop()
 #         self._task_group = TaskGroup()
 #         self._thread_pool = ThreadPoolExecutor(max_workers=1)
-
-    
-#     def _wait_for_ready_callbacks(self)
     
 #     async def _wait_for_ready_callbacks_in_thread(self):
 #         await self._loop.run_in_executor(self._thread_pool, self._construct_wait_set_and_wait)
 
-#     async def _spin(self):
+#     async def _spin(self, once: bool = False):
 #         async with self._task_group:
 #             self._task_group.create_task(self._wait_for_ready_callbacks_in_thread())
 
 #     def spin(self):
 #         asyncio.run(self._spin())
 
-
-#     def _spin_once_impl(
-#         self,
-#         timeout_sec: Optional[Union[float, TimeoutObject]] = None,
-#         wait_condition: Callable[[], bool] = lambda: False
-#     ) -> None:
-#         try:
-#             handler, entity, node = self.wait_for_ready_callbacks(
-#                 timeout_sec, None, wait_condition)
-#         except ShutdownException:
-#             pass
-#         except TimeoutException:
-#             pass
-#         except ConditionReachedException:
-#             pass
-#         else:
-#             handler()
-#             if handler.exception() is not None:
-#                 raise handler.exception()
-
-#             handler.result()  # raise any exceptions
-
-
-#     def wait_for_ready_callbacks(self, *args, **kwargs) -> Tuple[Task, WaitableEntityType, 'Node']:
-#         """
-#         Return callbacks that are ready to be executed.
-
-#         The arguments to this function are passed to the internal method
-#         :meth:`_wait_for_ready_callbacks` to get a generator for ready callbacks:
-
-#         .. Including the docstring for the hidden function for reference
-#         .. automethod:: _wait_for_ready_callbacks
-#         """
-#         while True:
-#             if self._cb_iter is None or self._last_args != args or self._last_kwargs != kwargs:
-#                 # Create a new generator
-#                 self._last_args = args
-#                 self._last_kwargs = kwargs
-#                 self._cb_iter = self._wait_for_ready_callbacks(*args, **kwargs)
-
-#             try:
-#                 return next(self._cb_iter)
-#             except StopIteration:
-#                 # Generator ran out of work
-#                 self._cb_iter = None
-
-#     def __enter__(self) -> 'Executor':
-#         # Nothing to do here
-#         return self
-
-#     def __exit__(
-#         self,
-#         exc_type: Optional[Type[BaseException]],
-#         exc_val: Optional[BaseException],
-#         exc_tb: Optional[TracebackType],
-#     ) -> None:
-#         self.shutdown()
-
-
-#     def spin(self) -> None:
-#         """Execute callbacks until shutdown."""
-#         while self._context.ok() and not self._is_shutdown:
-#             self.spin_once()
+#     def spin_once(self):
+#         asyncio.run(self._spin(once=True))
+ 
