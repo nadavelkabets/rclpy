@@ -21,7 +21,7 @@ from threading import Condition
 from threading import Lock
 from threading import RLock
 import time
-from types import TracebackType, coroutine
+from types import TracebackType
 from typing import Any
 from typing import Callable
 from typing import ContextManager
