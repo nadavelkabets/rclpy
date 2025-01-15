@@ -1048,4 +1048,4 @@ class AsyncioExecutor(Executor):
         if not inspect.iscoroutine(callback):
             callback = await_or_execute(callback, *args, **kwargs)
 
-        self._loop.create_task(callback)
+        return self._loop.create_task(callback)
