@@ -677,7 +677,6 @@ class Executor(ContextManager['Executor']):
                 raise ShutdownException()
             if not self._context.ok():
                 raise ExternalShutdownException()
-
             # get ready entities
             subs_ready = wait_set.get_ready_entities('subscription')
             guards_ready = wait_set.get_ready_entities('guard_condition')
@@ -697,8 +696,7 @@ class Executor(ContextManager['Executor']):
                     if wt in waitables and wt.is_ready(wait_set):
                         if wt.callback_group.can_execute(wt):
                             handler = self._make_handler(wt, node, self._take_waitable)
-                            yielded_work = True
-                            handlers.append((handler, wt, node))
+                            yield handler, wt, node
 
         # Process ready entities one node at a time
         for node in nodes_to_use:
@@ -708,36 +706,31 @@ class Executor(ContextManager['Executor']):
                     if tmr.handle.is_timer_ready():
                         if tmr.callback_group.can_execute(tmr):
                             handler = self._make_handler(tmr, node, self._take_timer)
-                            yielded_work = True
-                            handlers.append((handler, tmr, node))
+                            yield handler, tmr, node
 
             for sub in node.subscriptions:
                 if sub.handle.pointer in subs_ready:
                     if sub.callback_group.can_execute(sub):
                         handler = self._make_handler(sub, node, self._take_subscription)
-                        yielded_work = True
-                        handlers.append((handler, sub, node))
+                        yield handler, sub, node
 
             for gc in node.guards:
                 if gc._executor_triggered:
                     if gc.callback_group.can_execute(gc):
                         handler = self._make_handler(gc, node, self._take_guard_condition)
-                        yielded_work = True
-                        handlers.append((handler, gc, node))
+                        yield handler, gc, node
 
             for client in node.clients:
                 if client.handle.pointer in clients_ready:
                     if client.callback_group.can_execute(client):
                         handler = self._make_handler(client, node, self._take_client)
-                        yielded_work = True
-                        handlers.append((handler, client, node))
+                        yield handler, client, node
 
             for srv in node.services:
                 if srv.handle.pointer in services_ready:
                     if srv.callback_group.can_execute(srv):
                         handler = self._make_handler(srv, node, self._take_service)
-                        yielded_work = True
-                        handlers.append((handler, srv, node))
+                        yield handler, srv, node
 
         # Check timeout timer
         if (
@@ -793,21 +786,14 @@ class Executor(ContextManager['Executor']):
                     # Get rid of any tasks that are done
                     self._tasks = list(filter(lambda t_e_n: not t_e_n[0].done(), self._tasks))
 
-            # fix yielded_work
-            new_handlers = self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec)
-            if new_handlers:
+
+            for coro, entity, node in self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec):
                 yielded_work = True
-                with self._tasks_lock:
-                    for coro, entity, node in new_handlers:
-                        task = Task(coro, executor=self)
-                        self._tasks.append(
-                                (
-                                task, 
-                                entity, 
-                                node
-                                )
-                            )
-                        yield task, entity, node
+                task = Task(coro, executor=self)
+                with self._tasks_lock:  
+                    self._tasks.append((task, entity, node))
+
+                yield task, entity, node
 
         if self._is_shutdown:
             raise ShutdownException()
