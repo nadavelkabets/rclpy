@@ -37,6 +37,7 @@ from typing import TypeVar
 from typing import Union
 from asyncio import TaskGroup
 import asyncio
+from functools import partial
 
 import warnings
 
@@ -104,14 +105,14 @@ class _WorkTracker:
         return True
 
 
-async def await_or_execute(callback: Union[Callable, Coroutine], *args) -> Any:
+async def await_or_execute(callback: Union[Callable, Coroutine], *args, **kwargs) -> Any:
     """Await a callback if it is a coroutine, else execute it."""
     if inspect.iscoroutinefunction(callback):
         # Await a coroutine
-        return await callback(*args)
+        return await callback(*args, **kwargs)
     else:
         # Call a normal function
-        return callback(*args)
+        return callback(*args, **kwargs)
 
 
 class TimeoutException(Exception):
@@ -1044,3 +1045,9 @@ class AsyncioExecutor(Executor):
 
     def spin(self):
         self._loop.run_until_complete(self.spin_async())
+
+    def create_task(self, callback: Union[Callable, Coroutine], *args, **kwargs) -> Task:
+        if not inspect.iscoroutine(callback):
+            callback = await_or_execute(callback, *args, **kwargs)
+
+        self._loop.create_task(callback)
