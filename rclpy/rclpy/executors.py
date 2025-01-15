@@ -37,8 +37,6 @@ from typing import TypeVar
 from typing import Union
 from asyncio import TaskGroup
 import asyncio
-from functools import partial
-
 import warnings
 
 from rclpy.client import Client
