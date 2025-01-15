@@ -35,6 +35,8 @@ from typing import Type
 from typing import TYPE_CHECKING
 from typing import TypeVar
 from typing import Union
+from asyncio import TaskGroup
+import asyncio
 
 import warnings
 
@@ -979,55 +981,59 @@ class MultiThreadedExecutor(Executor):
         success: bool = super().shutdown(timeout_sec)
         self._executor.shutdown(wait=wait_for_threads)
         return success
-
-from asyncio import TaskGroup
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-# if we must "spin once" it is possible to inherit from EventLoop and access _run_once()
+    
+# if we want to enable "spin once" behavior:
+# it is possible to run the loop in _wait_for_ready_callbacks once and exit
+# or inherit from asyncio.EventLoop and call _run_once()
 class AsyncioExecutor(Executor):
     def __init__(self):
         super().__init__()
         self._loop = asyncio.new_event_loop()
-        self._task_group = TaskGroup()
+        self._task_group: Optional[TaskGroup] = None
         self._thread_pool = ThreadPoolExecutor(max_workers=1)
     
     def _wait_for_ready_callbacks(
-        self,
-        timeout_sec: Optional[Union[float, TimeoutObject]] = None,
-        nodes: Optional[List['Node']] = None,
-        condition: Callable[[], bool] = lambda: False,
-        once: bool = False,
-    ) -> Generator[Tuple[Task, WaitableEntityType, 'Node'], None, None]:
-        while True:
+            self,
+            timeout_sec: Optional[Union[float, TimeoutObject]] = None,
+            nodes: Optional[List['Node']] = None,
+            condition: Callable[[], bool] = lambda: False,
+        ) -> Generator[Tuple[Task, WaitableEntityType, 'Node'], None, None]:
+            """
+            Yield callbacks that are ready to be executed.
+
+            :raise TimeoutException: on timeout.
+            :raise ShutdownException: on if executor was shut down.
+
+            :param timeout_sec: Seconds to wait. Block forever if ``None`` or negative.
+                Don't wait if 0.
+            :param nodes: A list of nodes to wait on. Wait on all nodes if ``None``.
+            :param condition: A callable that makes the function return immediately when it evaluates
+                to True.
+            """
             timeout_timer = None
             timeout_nsec = timeout_sec_to_nsec(
                 timeout_sec.timeout if isinstance(timeout_sec, TimeoutObject) else timeout_sec)
             if timeout_nsec > 0:
                 timeout_timer = Timer(None, None, timeout_nsec, self._clock, context=self._context)
 
-            nodes_to_use = nodes
-            if nodes is None:
-                nodes_to_use = self.get_nodes()
-            
-            try:
+            while not self._is_shutdown and not condition():
+                # Refresh "all" nodes in case executor was woken by a node being added or removed
+                nodes_to_use = nodes
+                if nodes is None:
+                    nodes_to_use = self.get_nodes()
+
                 for coro, entity, node in self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec):
-                    self._task_group.create_task(coro)
-            except TimeoutException:
-                pass
+                    self._loop.call_soon_threadsafe(self._task_group.create_task, coro)
 
-            if once:
-                break
-    
-    async def _wait_for_ready_callbacks_in_thread(self):
-        await self._loop.run_in_executor(self._thread_pool, self._wait_for_ready_callbacks)
-
-    async def _spin(self, once: bool = False):
-        async with self._task_group:
-            self._task_group.create_task(self._wait_for_ready_callbacks_in_thread())
+            if self._is_shutdown:
+                raise ShutdownException()
+            if condition():
+                raise ConditionReachedException()
+        
+    async def spin_async(self, once: bool = False):
+        async with TaskGroup() as tg:
+            self._task_group = tg
+            await self._loop.run_in_executor(self._thread_pool, self._wait_for_ready_callbacks)
 
     def spin(self):
-        asyncio.run(self._spin())
-
-    def spin_once(self):
-        asyncio.run(self._spin(once=True))
+        self._loop.run_until_complete(self.spin_async())
