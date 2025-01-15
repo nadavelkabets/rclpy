@@ -1022,14 +1022,21 @@ class AsyncioExecutor(Executor):
                 if nodes is None:
                     nodes_to_use = self.get_nodes()
 
+                new_coroutines = []
                 for coro, entity, node in self._construct_wait_set_and_wait(nodes_to_use, timeout_timer, timeout_nsec):
-                    self._loop.call_soon_threadsafe(self._task_group.create_task, coro)
+                    new_coroutines.append(coro)
+
+                self._loop.call_soon_threadsafe(self._add_coros_to_task_group, new_coroutines)
 
             if self._is_shutdown:
                 raise ShutdownException()
             if condition():
                 raise ConditionReachedException()
         
+    def _add_coros_to_task_group(self, new_coroutines: list[Coroutine]):
+        for coro in new_coroutines:
+            self._task_group.create_task(coro)
+
     async def spin_async(self, once: bool = False):
         async with TaskGroup() as tg:
             self._task_group = tg
