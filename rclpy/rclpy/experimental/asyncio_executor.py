@@ -112,3 +112,35 @@ class AsyncioExecutor(Executor):
         self._loop.stop()
         self._loop.remove_reader(self._executor.fd)
         self._loop = None    
+
+    def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
+        asyncio_future = self._loop.create_future()
+        _chain_future(rclpy_future, asyncio_future)
+        return asyncio_future
+        
+def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
+    """Chain two futures so that when one completes, so does the other.
+
+    The result (or exception) of source will be copied to destination.
+    If destination is cancelled, source gets cancelled too.
+    """
+
+    def _call_check_cancel(asyncio_future: asyncio.Future):
+        if asyncio_future.cancelled():
+            rclpy_future.cancel()
+
+    def _call_set_state(rclpy_future: rclpy.Future):
+        if asyncio_future.cancelled():
+            return
+        if rclpy_future.cancelled():
+            asyncio_future.cancel()
+        else:
+            exception = rclpy_future.exception()
+            if exception is not None:
+                asyncio_future.set_exception(exception)
+            else:
+                result = rclpy_future.result()
+                asyncio_future.set_result(result)
+
+    asyncio_future.add_done_callback(_call_check_cancel)
+    rclpy_future.add_done_callback(_call_set_state)
