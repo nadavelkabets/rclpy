@@ -33,6 +33,7 @@
 #include "clock_event.hpp"
 #include "event_handle.hpp"
 #include "events_executor/events_executor.hpp"
+#include "asyncio_executor.hpp"
 #include "exceptions.hpp"
 #include "graph.hpp"
 #include "guard_condition.hpp"
@@ -250,4 +251,5 @@ PYBIND11_MODULE(_rclpy_pybind11, m) {
   rclpy::define_lifecycle_api(m);
 
   rclpy::events_executor::define_events_executor(m);
+  rclpy::asyncio_executor::define_asyncio_executor(m);
 }
