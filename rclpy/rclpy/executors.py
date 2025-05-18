@@ -118,21 +118,21 @@ class _WorkTracker:
 
 
 @overload
-async def await_or_execute(callback: Callable[..., Coroutine[Any, Any, T]], *args: Any) -> T: ...
+async def await_or_execute(callback: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any) -> T: ...
 
 
 @overload
-async def await_or_execute(callback: Callable[..., T], *args: Any) -> T: ...
+async def await_or_execute(callback: Callable[..., T], *args: Any, **kwargs: Any) -> T: ...
 
 
-async def await_or_execute(callback: Callable[..., Any], *args: Any) -> Any:
+async def await_or_execute(callback: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Await a callback if it is a coroutine, else execute it."""
     if inspect.iscoroutinefunction(callback):
         # Await a coroutine
-        return await callback(*args)
+        return await callback(*args, **kwargs)
     else:
         # Call a normal function
-        return callback(*args)
+        return callback(*args, **kwargs)
 
 
 class TimeoutException(Exception):

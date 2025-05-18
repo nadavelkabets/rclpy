@@ -1,22 +1,22 @@
 from types import TracebackType
-from typing import Callable, Optional, Type
+from typing import Any, Callable, Optional, Type
 from rclpy.executors import Executor
 import asyncio
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 import time
 from contextlib import contextmanager
 import rclpy
+from rclpy.executors import await_or_execute
 
 @contextmanager
-def timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractEventLoop):
+def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractEventLoop):
     handle = None
     if timeout:
         handle = loop.call_later(timeout, callback)
     yield
 
-    if handle and handle.when() < time.time():
+    if handle and handle.when() > time.time():
         handle.cancel()
-
 
 class AsyncioExecutor(Executor):
     def __init__(self, loop=None):
@@ -52,8 +52,12 @@ class AsyncioExecutor(Executor):
         task.add_done_callback(self._exception_handler)
         self._tasks.add(task)
     
-    def create_task(self, coro):
-        return self._loop.create_task(coro)
+    def create_task(self, callback: Callable[..., Any], *args: Any, **kwargs: Any
+                    ) -> asyncio.Task:
+        if not asyncio.iscoroutine(callback):
+            callback = await_or_execute(callback, *args, **kwargs)
+        
+        return asyncio.create_task(callback)
 
     def _exception_handler(self, fut):
         ex = fut.exception()
@@ -66,11 +70,11 @@ class AsyncioExecutor(Executor):
         self._loop.run_forever()
     
     def spin_once(self, timeout):
-        with timeout(timeout, self._stop_if_running, self._loop):
+        with _timeout(timeout, self._stop_if_running, self._loop):
             self._loop.run_forever()
 
     def spin_until_future_complete(self, future: asyncio.Future, timeout) -> None:
-        with timeout(timeout, self._stop_if_running, self._loop):
+        with _timeout(timeout, self._stop_if_running, self._loop):
             self._loop.run_until_complete(future)
 
     def _stop_if_running(self):
