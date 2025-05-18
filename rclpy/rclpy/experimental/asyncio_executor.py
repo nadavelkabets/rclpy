@@ -18,12 +18,16 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
     if handle and handle.when() > time.time():
         handle.cancel()
 
-class AsyncioExecutor(Executor):
-    def __init__(self, loop=None):
-        self._executor = _rclpy.AsyncioExecutor()
+class AsyncioExecutor:
+    def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
+        # self._executor = _rclpy.AsyncioExecutor()
         self._tasks = set()
-        self._stop_after_user_callback = False
-        self._loop: Optional[asyncio.AbstractEventLoop] = self.attach_to_loop(loop)
+        self._stop_after_user_callback = False   
+        if loop:
+            self._loop = loop
+        else:  
+            self._set_loop(loop)
+        self._attach_to_loop()
 
     def get_loop(self):
         return self._loop
@@ -39,13 +43,13 @@ class AsyncioExecutor(Executor):
     ) -> None:
         self.shutdown()
 
-    def _dispatch_ready_callbacks(self):
-        if self._stop_after_user_callback:
-            self._loop.stop()
+    # def _dispatch_ready_callbacks(self):
+    #     if self._stop_after_user_callback:
+    #         self._loop.stop()
 
-        ready_entities = self._executor.get_ready_entities()
-        for entity, number_of_events, callback in self._executor.ready_entities:
-            callback(self.create_task, entity, number_of_events)
+    #     ready_entities = self._executor.get_ready_entities()
+    #     for entity, number_of_events, callback in self._executor.ready_entities:
+    #         callback(self.create_task, entity, number_of_events)
 
     def _add_callback(self, cb):
         task = self.create_task(cb)
@@ -86,14 +90,7 @@ class AsyncioExecutor(Executor):
         self._loop.run_until_complete(future)
         self._stop_after_user_callback = False
 
-    def _set_event_loop(self, loop=None):
-        if loop:
-            self._loop = loop
-            return
-        
-        if self._loop:
-            return
-        
+    def _set_loop(self) -> None:
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -106,16 +103,25 @@ class AsyncioExecutor(Executor):
         
         return self._loop.create_future()
 
-    def attach_to_loop(self, loop=None):
-        #TODO: allow to reattach to a different loop
-        self._set_event_loop(loop)
-        self._loop.add_reader(self._executor.fd, self._dispatch_ready_callbacks)
-        self._loop.call_soon(self._executor.update_timers, self._loop)
+    def _attach_to_loop(self):
+        # self._loop.add_reader(self._executor.fd, self._dispatch_ready_callbacks)
+        # self._loop.call_soon(self._executor.update_timers, self._loop)
+        ...
+
+    def attach_to_loop(self, loop: asyncio.AbstractEventLoop):
+        if self._loop:
+            self._detach_from_loop()
+        
+        self._loop = loop
+        self._attach_to_loop()
+        
+    def _detach_from_loop(self):
+        # self._loop.remove_reader(self._executor.fd)
+        self._loop = None
 
     def shutdown(self):
         self._loop.stop()
-        self._loop.remove_reader(self._executor.fd)
-        self._loop = None    
+        self._detach_from_loop()
 
     def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
