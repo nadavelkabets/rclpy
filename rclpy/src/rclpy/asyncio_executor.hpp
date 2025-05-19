@@ -14,6 +14,10 @@ class AsyncioExecutor : public events_executor::EventsExecutorBase
 public:
   explicit AsyncioExecutor();
   ~AsyncioExecutor();
+
+  void wake();
+private:
+  py::object loop_;
 };
 
 void define_asyncio_executor(pybind11::object module);

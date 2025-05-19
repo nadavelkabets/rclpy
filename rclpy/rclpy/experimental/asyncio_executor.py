@@ -1,6 +1,6 @@
 from types import TracebackType
 from typing import Any, Callable, Optional, Type
-from rclpy.executors import Executor
+from rclpy.executors import ExecutorBase
 import asyncio
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 import time
@@ -18,14 +18,14 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
     if handle and handle.when() > time.time():
         handle.cancel()
 
-class AsyncioExecutor:
+class AsyncioExecutor(_rclpy.AsyncioExecutor, ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
-        self._executor = _rclpy.AsyncioExecutor()
+        super().__init__()
         self._tasks = set()
         self._stop_after_user_callback = False   
         if loop:
             self._loop = loop
-        else:  
+        else:
             self._set_loop(loop)
         self._attach_to_loop()
 

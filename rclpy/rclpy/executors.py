@@ -174,7 +174,10 @@ class TimeoutObject:
         self._timeout = timeout
 
 
-class Executor(ContextManager['Executor']):
+class ExecutorBase:
+    ...
+
+class Executor(ContextManager['Executor'], ExecutorBase):
     """
     The base class for an executor.
 
