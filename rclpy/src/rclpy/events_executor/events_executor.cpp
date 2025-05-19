@@ -104,7 +104,7 @@ bool EventsExecutor::shutdown(std::optional<double> timeout)
   return true;
 }
 
-bool EventsExecutor::add_node(py::object node)
+bool EventsExecutorBase::add_node(py::object node)
 {
   if (nodes_.contains(node)) {
     return false;
@@ -117,7 +117,7 @@ bool EventsExecutor::add_node(py::object node)
   return true;
 }
 
-void EventsExecutor::remove_node(py::handle node)
+void EventsExecutorBase::remove_node(py::handle node)
 {
   if (!nodes_.contains(node)) {
     return;
@@ -128,22 +128,27 @@ void EventsExecutor::remove_node(py::handle node)
   wake();
 }
 
-void EventsExecutor::wake()
+void EventsExecutorBase::wake()
 {
   if (!wake_pending_.exchange(true)) {
-    // Update tracked entities.
-    events_queue_.Enqueue([this]() {
-        py::gil_scoped_acquire gil_acquire;
-        if(!py::cast<bool>(rclpy_context_.attr("ok")()))
-        {
-          events_queue_.Stop();
-        }
-        UpdateEntitiesFromNodes();
-    });
+    on_wake();
   }
 }
 
-py::list EventsExecutor::get_nodes() const {return nodes_;}
+void EventsExecutor::on_wake()
+{
+  events_queue_.Enqueue([this]() {
+      py::gil_scoped_acquire gil_acquire;
+      if(!py::cast<bool>(rclpy_context_.attr("ok")()))
+      {
+        events_queue_.Stop();
+      }
+      UpdateEntitiesFromNodes();
+  }
+  );
+}
+
+py::list EventsExecutorBase::get_nodes() const {return nodes_;}
 
 // NOTE: The timeouts on the below two methods are always realtime even if we're running in debug
 // time.  This is true of other executors too, because debug time is always associated with a

@@ -15,9 +15,9 @@ public:
   explicit AsyncioExecutor();
   ~AsyncioExecutor();
 
-  void wake();
 private:
   py::object loop_;
+  void on_wake();
 };
 
 void define_asyncio_executor(pybind11::object module);

@@ -11,26 +11,16 @@ AsyncioExecutor::AsyncioExecutor()
 {
 }
 
-AsyncioExecutor::~AsyncioExecutor() 
+void AsyncioExecutor::on_wake()
 {
-}
-
-void EventsExecutor::wake()
-{
-  if (!wake_pending_.exchange(true)) {
-    // Update tracked entities.
-    
-    loop_.attr("call_soon")([this](){this::UpdateEntitiesFromNodes()})
-  }
+  UpdateEntitiesFromNodes();
 }
 
 // pybind11 module bindings
 
 void define_asyncio_executor(py::object m)
 {
-  py::class_<AsyncioExecutor>(m, "AsyncioExecutor")
-  .def(py::init<>())
-  .def_readwrite("_loop", &AsyncioExecutor::loop_);
+  py::class_<AsyncioExecutor>(m, "AsyncioExecutor");
 }
 
 }  // namespace asyncio_executor

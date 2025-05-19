@@ -18,15 +18,15 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
     if handle and handle.when() > time.time():
         handle.cancel()
 
-class AsyncioExecutor(_rclpy.AsyncioExecutor, ExecutorBase):
+class AsyncioExecutor(ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
-        super().__init__()
+        self.__executor = _rclpy.AsyncioExecutor()
         self._tasks = set()
         self._stop_after_user_callback = False   
         if loop:
             self._loop = loop
         else:
-            self._set_loop(loop)
+            self._set_loop()
         self._attach_to_loop()
 
     def get_loop(self):
@@ -122,6 +122,15 @@ class AsyncioExecutor(_rclpy.AsyncioExecutor, ExecutorBase):
     def shutdown(self):
         self._loop.stop()
         self._detach_from_loop()
+
+    def wake(self):
+        self.__executor.wake()
+
+    def add_node(self, node: Node):
+        return self.__executor.add_node(node)
+
+    def remove_node(self, node: Node):
+        self.__executor.remove_node(node)
 
     def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
         asyncio_future = self._loop.create_future()

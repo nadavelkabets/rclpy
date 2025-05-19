@@ -47,6 +47,12 @@ namespace events_executor
 
 class EventsExecutorBase
 {
+public:
+  void wake();
+  bool add_node(pybind11::object node);
+  void remove_node(pybind11::handle node);
+  pybind11::list get_nodes() const;
+
 protected:
   /// Updates the sets of known entities based on the currently tracked nodes.  This is not thread
   /// safe, so it must be posted to the EventsQueue if the executor is currently spinning.  Expects
@@ -81,6 +87,7 @@ protected:
   virtual void HandleRemovedService(pybind11::handle);
   virtual void HandleAddedWaitable(pybind11::handle);
   virtual void HandleRemovedWaitable(pybind11::handle);
+  virtual void on_wake();
 };
 
 /// Events executor implementation for rclpy
@@ -105,10 +112,6 @@ public:
   pybind11::object create_task(
     pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
   bool shutdown(std::optional<double> timeout_sec = {});
-  bool add_node(pybind11::object node);
-  void remove_node(pybind11::handle node);
-  void wake();
-  pybind11::list get_nodes() const;
   void spin(std::optional<double> timeout_sec = {}, bool stop_after_user_callback = false);
   void spin_until_future_complete(
     pybind11::handle future, std::optional<double> timeout_sec = {},
@@ -127,6 +130,7 @@ private:
     std::vector<const rcl_event_t *> events;
   };
 
+  void on_wake();
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
