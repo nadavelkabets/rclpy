@@ -99,11 +99,8 @@ bool EventsExecutor::shutdown(std::optional<double> timeout)
     }
   }
 
-  // Tear down any callbacks we still have registered.
-  for (py::handle node : py::list(nodes_)) {
-    remove_node(node);
-  }
-  UpdateEntitiesFromNodes(true);
+  nodes_.clear();
+  UpdateEntitiesFromNodes();
   return true;
 }
 
@@ -137,7 +134,11 @@ void EventsExecutor::wake()
     // Update tracked entities.
     events_queue_.Enqueue([this]() {
         py::gil_scoped_acquire gil_acquire;
-        UpdateEntitiesFromNodes(!py::cast<bool>(rclpy_context_.attr("ok")()));
+        if(!py::cast<bool>(rclpy_context_.attr("ok")()))
+        {
+          events_queue_.Stop();
+        }
+        UpdateEntitiesFromNodes();
     });
   }
 }
@@ -196,7 +197,7 @@ void EventsExecutor::spin_until_future_complete(
 EventsExecutor * EventsExecutor::enter() {return this;}
 void EventsExecutor::exit(py::object, py::object, py::object) {shutdown();}
 
-void EventsExecutor::UpdateEntitiesFromNodes(bool shutdown)
+void EventsExecutorBase::UpdateEntitiesFromNodes()
 {
   // Clear pending flag as early as possible, so we error on the side of retriggering a few
   // harmless updates rather than potentially missing important additions.
@@ -208,50 +209,48 @@ void EventsExecutor::UpdateEntitiesFromNodes(bool shutdown)
   py::set clients;
   py::set services;
   py::set waitables;
-  if (!shutdown) {
-    for (py::handle node : nodes_) {
-      subscriptions.attr("update")(py::set(node.attr("subscriptions")));
-      timers.attr("update")(py::set(node.attr("timers")));
-      clients.attr("update")(py::set(node.attr("clients")));
-      services.attr("update")(py::set(node.attr("services")));
-      waitables.attr("update")(py::set(node.attr("waitables")));
+  for (py::handle node : nodes_) {
+    subscriptions.attr("update")(py::set(node.attr("subscriptions")));
+    timers.attr("update")(py::set(node.attr("timers")));
+    clients.attr("update")(py::set(node.attr("clients")));
+    services.attr("update")(py::set(node.attr("services")));
+    waitables.attr("update")(py::set(node.attr("waitables")));
 
-      // It doesn't seem to be possible to support guard conditions with a callback-based (as
-      // opposed to waitset-based) API.  Fortunately we don't seem to need to.
-      if (!py::set(node.attr("guards")).empty()) {
-        throw std::runtime_error("Guard conditions not supported");
-      }
+    // It doesn't seem to be possible to support guard conditions with a callback-based (as
+    // opposed to waitset-based) API.  Fortunately we don't seem to need to.
+    if (!py::set(node.attr("guards")).empty()) {
+      throw std::runtime_error("Guard conditions not supported");
     }
-  } else {
-    // Remove all tracked entities and nodes.
-    nodes_.clear();
   }
 
   // Perform updates for added and removed entities
   UpdateEntitySet(
     subscriptions_, subscriptions,
-    std::bind(&EventsExecutor::HandleAddedSubscription, this, pl::_1),
-    std::bind(&EventsExecutor::HandleRemovedSubscription, this, pl::_1));
-  UpdateEntitySet(
-    timers_, timers, std::bind(&EventsExecutor::HandleAddedTimer, this, pl::_1),
-    std::bind(&EventsExecutor::HandleRemovedTimer, this, pl::_1));
-  UpdateEntitySet(
-    clients_, clients, std::bind(&EventsExecutor::HandleAddedClient, this, pl::_1),
-    std::bind(&EventsExecutor::HandleRemovedClient, this, pl::_1));
-  UpdateEntitySet(
-    services_, services, std::bind(&EventsExecutor::HandleAddedService, this, pl::_1),
-    std::bind(&EventsExecutor::HandleRemovedService, this, pl::_1));
-  UpdateEntitySet(
-    waitables_, waitables, std::bind(&EventsExecutor::HandleAddedWaitable, this, pl::_1),
-    std::bind(&EventsExecutor::HandleRemovedWaitable, this, pl::_1));
+    [this](py::handle h) { this->HandleAddedSubscription(h); },
+    [this](py::handle h) { this->HandleRemovedSubscription(h); });
 
-  if (shutdown) {
-    // Stop spinning after everything is torn down.
-    events_queue_.Stop();
-  }
+  UpdateEntitySet(
+    timers_, timers,
+    [this](py::handle h) { this->HandleAddedTimer(h); },
+    [this](py::handle h) { this->HandleRemovedTimer(h); });
+
+  UpdateEntitySet(
+    clients_, clients,
+    [this](py::handle h) { this->HandleAddedClient(h); },
+    [this](py::handle h) { this->HandleRemovedClient(h); });
+
+  UpdateEntitySet(
+    services_, services,
+    [this](py::handle h) { this->HandleAddedService(h); },
+    [this](py::handle h) { this->HandleRemovedService(h); });
+
+  UpdateEntitySet(
+    waitables_, waitables,
+    [this](py::handle h) { this->HandleAddedWaitable(h); },
+    [this](py::handle h) { this->HandleRemovedWaitable(h); });
 }
 
-void EventsExecutor::UpdateEntitySet(
+void EventsExecutorBase::UpdateEntitySet(
   py::set & entity_set, const py::set & new_entity_set,
   std::function<void(py::handle)> added_entity_callback,
   std::function<void(py::handle)> removed_entity_callback)
