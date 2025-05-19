@@ -20,7 +20,7 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
 
 class AsyncioExecutor:
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
-        # self._executor = _rclpy.AsyncioExecutor()
+        self._executor = _rclpy.AsyncioExecutor()
         self._tasks = set()
         self._stop_after_user_callback = False   
         if loop:

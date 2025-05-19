@@ -2,13 +2,14 @@
 #define RCLPY__ASYNCIO_EXECUTOR_HPP_
 
 #include <pybind11/pybind11.h>
+#include "events_executor/events_executor.hpp"
 
 namespace rclpy
 {
 namespace asyncio_executor
 {
 
-class AsyncioExecutor
+class AsyncioExecutor : public events_executor::EventsExecutorBase
 {
 public:
   explicit AsyncioExecutor();
