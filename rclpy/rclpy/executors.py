@@ -173,9 +173,158 @@ class TimeoutObject:
     def timeout(self, timeout: float) -> None:
         self._timeout = timeout
 
+class AbstractExecutor:
+    @property
+    def context(self) -> Context: ...
+    def add_node(self, node: Node) -> bool: ...
+    def remove_node(self, node: Node) -> None: ...
+    def create_task(self, callable, *args, **kwargs) -> Task: ...
+    def wake(self) -> None: ...
+    def get_nodes(self) -> List[Node]: ...
 
-class ExecutorBase:
-    ...
+class ExecutorBase(AbstractExecutor):
+    def _take_timer(self, tmr: Timer) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with tmr.handle:
+                info = tmr.handle.call_timer_with_info()
+                timer_info = TimerInfo(
+                    expected_call_time=info['expected_call_time'],
+                    actual_call_time=info['actual_call_time'],
+                    clock_type=tmr.clock.clock_type)
+
+                def check_argument_type(callback_func: Union[Callable[[], None],
+                                                             Callable[[TimerInfo], None]],
+                                        target_type: Type[TimerInfo]) -> Optional[str]:
+                    sig = inspect.signature(callback_func)
+                    for param in sig.parameters.values():
+                        if param.annotation == target_type:
+                            # return 1st one immediately
+                            return param.name
+                    # We could not find the target type in the signature
+                    return None
+
+                # User might change the Timer.callback function signature at runtime,
+                # so it needs to check the signature every time.
+                if tmr.callback:
+                    arg_name = check_argument_type(tmr.callback, target_type=TimerInfo)
+                if arg_name is not None:
+                    prefilled_arg = {arg_name: timer_info}
+
+                    async def _execute() -> None:
+                        if tmr.callback:
+                            await await_or_execute(partial(tmr.callback, **prefilled_arg))
+                    return _execute
+                else:
+                    async def _execute() -> None:
+                        if tmr.callback:
+                            await await_or_execute(tmr.callback)
+                    return _execute
+        except InvalidHandle:
+            # Timer is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_timer below
+            pass
+
+        return None
+
+    def _take_subscription(self, sub: Subscription[Any]
+                           ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with sub.handle:
+                msg_info = sub.handle.take_message(sub.msg_type, sub.raw)
+                if msg_info is None:
+                    return None
+
+                if sub._callback_type is Subscription.CallbackType.MessageOnly:
+                    msg_tuple: Union[Tuple[Msg], Tuple[Msg, MessageInfo]] = (msg_info[0], )
+                else:
+                    msg_tuple = msg_info
+
+                async def _execute() -> None:
+                    await await_or_execute(sub.callback, *msg_tuple)
+
+                return _execute
+        except InvalidHandle:
+            # Subscription is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_subscription below
+            pass
+
+        return None
+
+    def _take_client(self, client: Client[Any, Any]
+                     ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with client.handle:
+                header_and_response = client.handle.take_response(client.srv_type.Response)
+
+            async def _execute() -> None:
+                header, response = header_and_response
+                if header is None:
+                    return
+                try:
+                    sequence = header.request_id.sequence_number
+                    future = client.get_pending_request(sequence)
+                except KeyError:
+                    # The request was cancelled
+                    pass
+                else:
+                    future._set_executor(self)
+                    future.set_result(response)
+            return _execute
+
+        except InvalidHandle:
+            # Client is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_client below
+            pass
+
+        return None
+
+    def _take_service(self, srv: Service[Any, Any]
+                      ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with srv.handle:
+                request_and_header = srv.handle.service_take_request(srv.srv_type.Request)
+
+            async def _execute() -> None:
+                (request, header) = request_and_header
+                if header is None:
+                    return
+
+                response = await await_or_execute(srv.callback, request, srv.srv_type.Response())
+                srv.send_response(response, header)
+            return _execute
+        except InvalidHandle:
+            # Service is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_service below
+            pass
+
+        return None
+
+    def _take_guard_condition(self, gc: GuardCondition
+                              ) -> Callable[[], Coroutine[None, None, None]]:
+        gc._executor_triggered = False
+
+        async def _execute() -> None:
+            if gc.callback:
+                await await_or_execute(gc.callback)
+        return _execute
+
+    def _take_waitable(self, waitable: Waitable[Any]) -> Callable[[], Coroutine[None, None, None]]:
+        data = waitable.take_data()
+
+        async def _execute() -> None:
+            for future in waitable._futures:
+                future._set_executor(self)
+            await waitable.execute(data)
+        return _execute
+
 
 class Executor(ContextManager['Executor'], ExecutorBase):
     """
@@ -424,148 +573,6 @@ class Executor(ContextManager['Executor'], ExecutorBase):
         timeout_sec: Optional[Union[float, TimeoutObject]] = None
     ) -> None:
         raise NotImplementedError()
-
-    def _take_timer(self, tmr: Timer) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with tmr.handle:
-                info = tmr.handle.call_timer_with_info()
-                timer_info = TimerInfo(
-                    expected_call_time=info['expected_call_time'],
-                    actual_call_time=info['actual_call_time'],
-                    clock_type=tmr.clock.clock_type)
-
-                def check_argument_type(callback_func: Union[Callable[[], None],
-                                                             Callable[[TimerInfo], None]],
-                                        target_type: Type[TimerInfo]) -> Optional[str]:
-                    sig = inspect.signature(callback_func)
-                    for param in sig.parameters.values():
-                        if param.annotation == target_type:
-                            # return 1st one immediately
-                            return param.name
-                    # We could not find the target type in the signature
-                    return None
-
-                # User might change the Timer.callback function signature at runtime,
-                # so it needs to check the signature every time.
-                if tmr.callback:
-                    arg_name = check_argument_type(tmr.callback, target_type=TimerInfo)
-                if arg_name is not None:
-                    prefilled_arg = {arg_name: timer_info}
-
-                    async def _execute() -> None:
-                        if tmr.callback:
-                            await await_or_execute(partial(tmr.callback, **prefilled_arg))
-                    return _execute
-                else:
-                    async def _execute() -> None:
-                        if tmr.callback:
-                            await await_or_execute(tmr.callback)
-                    return _execute
-        except InvalidHandle:
-            # Timer is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_timer below
-            pass
-
-        return None
-
-    def _take_subscription(self, sub: Subscription[Any]
-                           ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with sub.handle:
-                msg_info = sub.handle.take_message(sub.msg_type, sub.raw)
-                if msg_info is None:
-                    return None
-
-                if sub._callback_type is Subscription.CallbackType.MessageOnly:
-                    msg_tuple: Union[Tuple[Msg], Tuple[Msg, MessageInfo]] = (msg_info[0], )
-                else:
-                    msg_tuple = msg_info
-
-                async def _execute() -> None:
-                    await await_or_execute(sub.callback, *msg_tuple)
-
-                return _execute
-        except InvalidHandle:
-            # Subscription is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_subscription below
-            pass
-
-        return None
-
-    def _take_client(self, client: Client[Any, Any]
-                     ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with client.handle:
-                header_and_response = client.handle.take_response(client.srv_type.Response)
-
-            async def _execute() -> None:
-                header, response = header_and_response
-                if header is None:
-                    return
-                try:
-                    sequence = header.request_id.sequence_number
-                    future = client.get_pending_request(sequence)
-                except KeyError:
-                    # The request was cancelled
-                    pass
-                else:
-                    future._set_executor(self)
-                    future.set_result(response)
-            return _execute
-
-        except InvalidHandle:
-            # Client is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_client below
-            pass
-
-        return None
-
-    def _take_service(self, srv: Service[Any, Any]
-                      ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with srv.handle:
-                request_and_header = srv.handle.service_take_request(srv.srv_type.Request)
-
-            async def _execute() -> None:
-                (request, header) = request_and_header
-                if header is None:
-                    return
-
-                response = await await_or_execute(srv.callback, request, srv.srv_type.Response())
-                srv.send_response(response, header)
-            return _execute
-        except InvalidHandle:
-            # Service is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_service below
-            pass
-
-        return None
-
-    def _take_guard_condition(self, gc: GuardCondition
-                              ) -> Callable[[], Coroutine[None, None, None]]:
-        gc._executor_triggered = False
-
-        async def _execute() -> None:
-            if gc.callback:
-                await await_or_execute(gc.callback)
-        return _execute
-
-    def _take_waitable(self, waitable: Waitable[Any]) -> Callable[[], Coroutine[None, None, None]]:
-        data = waitable.take_data()
-
-        async def _execute() -> None:
-            for future in waitable._futures:
-                future._set_executor(self)
-            await waitable.execute(data)
-        return _execute
 
     def _make_handler(
         self,
