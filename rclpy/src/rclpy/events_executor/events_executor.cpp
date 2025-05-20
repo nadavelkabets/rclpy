@@ -47,6 +47,11 @@ namespace rclpy
 namespace events_executor
 {
 
+EventsExecutorBase::EventsExecutorBase(std::function<void(std::function<void()>)> enqueue_callback)
+: rcl_callback_manager_(std::move(enqueue_callback))
+{
+}
+
 EventsExecutor::EventsExecutor(py::object context)
 : rclpy_context_(context),
   inspect_iscoroutine_(py::module_::import("inspect").attr("iscoroutine")),
@@ -54,7 +59,7 @@ EventsExecutor::EventsExecutor(py::object context)
   rclpy_task_(py::module_::import("rclpy.task").attr("Task")),
   rclpy_timer_timer_info_(py::module_::import("rclpy.timer").attr("TimerInfo")),
   signal_callback_([this]() {events_queue_.Stop();}),
-  rcl_callback_manager_([this](std::function<void()> callback) {events_queue_.Enqueue(std::move(callback));}),
+  EventsExecutorBase([this](std::function<void()> callback) {events_queue_.Enqueue(std::move(callback));}),
   timers_manager_(
     &events_queue_, std::bind(&EventsExecutor::HandleTimerReady, this, pl::_1, pl::_2))
 {

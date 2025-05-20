@@ -48,6 +48,7 @@ namespace events_executor
 class EventsExecutorBase
 {
 public:
+  explicit EventsExecutorBase(std::function<void(std::function<void()>)> enqueue_callback);
   void wake();
   bool add_node(pybind11::object node);
   void remove_node(pybind11::handle node);
