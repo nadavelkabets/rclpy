@@ -29,8 +29,8 @@ extern "C" void RclEventCallbackTrampoline(const void * user_data, size_t number
   (*cb)(number_of_events);
 }
 
-RclCallbackManager::RclCallbackManager(EventsQueue * events_queue)
-: events_queue_(events_queue) {}
+RclCallbackManager::RclCallbackManager(std::function<void(std::function<void()>)> enqueue_callback)
+: enqueue_callback_(enqueue_callback) {}
 
 RclCallbackManager::~RclCallbackManager()
 {
@@ -54,7 +54,7 @@ const void * RclCallbackManager::MakeCallback(
   CbEntry new_entry;
   new_entry.cb =
     std::make_unique<std::function<void(size_t)>>([this, callback, key](size_t number_of_events) {
-        events_queue_->Enqueue([this, callback, key, number_of_events]() {
+        enqueue_callback_([this, callback, key, number_of_events]() {
           if (!owned_cbs_.count(key)) {
             // This callback has been removed, just drop it as the objects it may want to touch may
             // no longer exist.

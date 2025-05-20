@@ -54,7 +54,7 @@ EventsExecutor::EventsExecutor(py::object context)
   rclpy_task_(py::module_::import("rclpy.task").attr("Task")),
   rclpy_timer_timer_info_(py::module_::import("rclpy.timer").attr("TimerInfo")),
   signal_callback_([this]() {events_queue_.Stop();}),
-  rcl_callback_manager_(&events_queue_),
+  rcl_callback_manager_([this](std::function<void()> callback) {events_queue_.Enqueue(std::move(callback));}),
   timers_manager_(
     &events_queue_, std::bind(&EventsExecutor::HandleTimerReady, this, pl::_1, pl::_2))
 {
@@ -273,12 +273,12 @@ void EventsExecutorBase::UpdateEntitySet(
   entity_set = new_entity_set;
 }
 
-void EventsExecutor::HandleAddedSubscription(py::handle subscription)
+void EventsExecutorBase::HandleAddedSubscription(py::handle subscription)
 {
   py::handle handle = subscription.attr("handle");
   auto with = std::make_shared<ScopedWith>(handle);
   const rcl_subscription_t * rcl_ptr = py::cast<const Subscription &>(handle).rcl_ptr();
-  const auto cb = std::bind(&EventsExecutor::HandleSubscriptionReady, this, subscription, pl::_1);
+  const auto cb = [this, subscription](size_t number_of_events) {HandleSubscriptionReady(subscription, number_of_events);};
   if (
     RCL_RET_OK != rcl_subscription_set_on_new_message_callback(
                     rcl_ptr, RclEventCallbackTrampoline,
@@ -290,7 +290,7 @@ void EventsExecutor::HandleAddedSubscription(py::handle subscription)
   }
 }
 
-void EventsExecutor::HandleRemovedSubscription(py::handle subscription)
+void EventsExecutorBase::HandleRemovedSubscription(py::handle subscription)
 {
   py::handle handle = subscription.attr("handle");
   const rcl_subscription_t * rcl_ptr = py::cast<const Subscription &>(handle).rcl_ptr();

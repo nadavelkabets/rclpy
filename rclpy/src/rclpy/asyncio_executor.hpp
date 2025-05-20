@@ -12,11 +12,11 @@ namespace asyncio_executor
 class AsyncioExecutor : public events_executor::EventsExecutorBase
 {
 public:
-  explicit AsyncioExecutor();
+  explicit AsyncioExecutor(py::handle ex);
   ~AsyncioExecutor();
 
 private:
-  py::object loop_;
+  py::handle ex_;
   void on_wake();
 };
 

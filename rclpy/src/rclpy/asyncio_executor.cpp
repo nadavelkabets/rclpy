@@ -1,4 +1,5 @@
 #include "asyncio_executor.hpp"
+#include "events_executor/rcl_support.hpp"
 
 namespace py = pybind11;
 
@@ -7,7 +8,8 @@ namespace rclpy
 namespace asyncio_executor
 {
 
-AsyncioExecutor::AsyncioExecutor()
+AsyncioExecutor::AsyncioExecutor(py::handle ex)
+: ex_(ex)
 {
 }
 

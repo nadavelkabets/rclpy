@@ -69,6 +69,8 @@ protected:
   pybind11::set nodes_;                ///< The set of all nodes we're executing
 
   std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
+  
+  RclCallbackManager rcl_callback_manager_;
 
   /// Given an existing set of entities and a set with the desired new state, updates the existing
   /// set and invokes callbacks on each added or removed entity.
@@ -77,8 +79,9 @@ protected:
     std::function<void(pybind11::handle)> added_entity_callback,
     std::function<void(pybind11::handle)> removed_entity_callback);
 
-  virtual void HandleAddedSubscription(pybind11::handle);
-  virtual void HandleRemovedSubscription(pybind11::handle);
+  void HandleAddedSubscription(pybind11::handle);
+  void HandleRemovedSubscription(pybind11::handle);
+  virtual void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
   virtual void HandleAddedTimer(pybind11::handle);
   virtual void HandleRemovedTimer(pybind11::handle);
   virtual void HandleAddedClient(pybind11::handle);
@@ -214,7 +217,6 @@ private:
   /// than the other entity types.
   std::unordered_map<pybind11::handle, WaitableSubEntities, PythonHasher> waitable_entities_;
 
-  RclCallbackManager rcl_callback_manager_;
   TimersManager timers_manager_;
 };
 

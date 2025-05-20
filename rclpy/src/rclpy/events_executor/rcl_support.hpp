@@ -45,7 +45,7 @@ public:
   /// pointer is aliased and must live for the lifetime of this object.  These callbacks will be
   /// invoked without the Python Global Interpreter Lock held, so if they need to access Python at
   /// all make sure to acquire that explicitly.
-  explicit RclCallbackManager(EventsQueue * events_queue);
+  explicit RclCallbackManager(std::function<void(std::function<void()>)> enqueue_callback);
   ~RclCallbackManager();
 
   /// Creates a callback wrapper to be passed to RCL C functions.  @p key should be a pointer to
@@ -68,7 +68,7 @@ private:
     std::shared_ptr<ScopedWith> with;
   };
 
-  EventsQueue * const events_queue_;
+  std::function<void(std::function<void()>)> enqueue_callback_;
 
   /// The map key is the raw pointer to the RCL entity object (subscription, etc) associated with
   /// the callback.
