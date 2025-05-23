@@ -20,7 +20,7 @@ from types import TracebackType
 from typing import (Any, Callable, Coroutine, Final, Generic, Literal, Optional, overload,
                     Sequence, TypeAlias, TypedDict, TypeVar)
 
-
+import asyncio
 from action_msgs.msg import GoalInfo
 from action_msgs.msg._goal_status_array import GoalStatusArray
 from action_msgs.srv._cancel_goal import CancelGoal
@@ -1236,7 +1236,7 @@ class EventsExecutor:
                  exc_val: BaseException | None, exctb: TracebackType | None) -> None: ...
 
 class AsyncioExecutor:
-    def __init__(self): ...
+    def __init__(self, get_loop: Callable[[], asyncio.AbstractEventLoop], create_task: Callable[..., asyncio.Task]): ...
 
     def wake(self): ...
 

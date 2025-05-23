@@ -12,11 +12,14 @@ namespace asyncio_executor
 class AsyncioExecutor : public events_executor::EventsExecutorBase
 {
 public:
-  explicit AsyncioExecutor(py::handle ex);
+  explicit AsyncioExecutor(py::object get_loop, py::object create_task);
   ~AsyncioExecutor();
 
 private:
-  py::handle ex_;
+  pybind11::object create_task(
+    pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
+  py::handle get_loop_;
+  py::handle create_task_;
   void OnWake();
   void CallSoon(std::function<void()> callback);
 };

@@ -8,16 +8,23 @@ namespace rclpy
 namespace asyncio_executor
 {
 
-AsyncioExecutor::AsyncioExecutor(py::handle ex)
-: ex_(ex)
+AsyncioExecutor::AsyncioExecutor(py::object get_loop, py::object create_task)
+: get_loop_(get_loop),
+  create_task_(create_task)
 {
 }
 
 void AsyncioExecutor::CallSoon(std::function<void()> callback)
 {
   py::gil_scoped_acquire gil_acquire;
-  py::handle loop = ex_.attr("get_loop")();
+  py::handle loop = get_loop_();
   loop.attr("call_soon_threadsafe")(callback);
+}
+
+pybind11::object AsyncioExecutor::create_task(
+    pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {})
+{
+  return create_task_(callback, args, kwargs);
 }
 
 void AsyncioExecutor::OnWake()

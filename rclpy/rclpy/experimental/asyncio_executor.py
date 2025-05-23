@@ -7,6 +7,7 @@ import time
 from contextlib import contextmanager
 import rclpy
 from rclpy.executors import await_or_execute
+from rclpy.node import Node
 
 @contextmanager
 def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractEventLoop):
@@ -20,7 +21,7 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
 
 class AsyncioExecutor(ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
-        self.__executor = _rclpy.AsyncioExecutor()
+        self.__executor = _rclpy.AsyncioExecutor(self.get_loop, self._execute_entity)
         self._tasks = set()
         self._stop_after_user_callback = False   
         if loop:
@@ -34,6 +35,9 @@ class AsyncioExecutor(ExecutorBase):
 
     def __enter__(self):
         return self
+
+    def __del__(self):
+        del self.__executor
 
     def __exit__(
         self,
@@ -51,11 +55,13 @@ class AsyncioExecutor(ExecutorBase):
     #     for entity, number_of_events, callback in self._executor.ready_entities:
     #         callback(self.create_task, entity, number_of_events)
 
-    def _add_callback(self, cb):
-        task = self.create_task(cb)
+    def _execute_entity(self, callback: Callable[..., Any], *args: Any, **kwargs: Any
+                    ) -> asyncio.Task:
+        task = self.create_task(callback, args, kwargs)
         task.add_done_callback(self._exception_handler)
         self._tasks.add(task)
-    
+        return task
+
     def create_task(self, callback: Callable[..., Any], *args: Any, **kwargs: Any
                     ) -> asyncio.Task:
         if not asyncio.iscoroutine(callback):
