@@ -230,28 +230,28 @@ void EventsExecutorBase::UpdateEntitiesFromNodes()
   // Perform updates for added and removed entities
   UpdateEntitySet(
     subscriptions_, subscriptions,
-    [this](py::handle h) { this->HandleAddedSubscription(h); },
-    [this](py::handle h) { this->HandleRemovedSubscription(h); });
+    [this](py::handle h) { HandleAddedSubscription(h); },
+    [this](py::handle h) { HandleRemovedSubscription(h); });
 
   UpdateEntitySet(
     timers_, timers,
-    [this](py::handle h) { this->HandleAddedTimer(h); },
-    [this](py::handle h) { this->HandleRemovedTimer(h); });
+    [this](py::handle h) { HandleAddedTimer(h); },
+    [this](py::handle h) { HandleRemovedTimer(h); });
 
   UpdateEntitySet(
     clients_, clients,
-    [this](py::handle h) { this->HandleAddedClient(h); },
-    [this](py::handle h) { this->HandleRemovedClient(h); });
+    [this](py::handle h) { HandleAddedClient(h); },
+    [this](py::handle h) { HandleRemovedClient(h); });
 
   UpdateEntitySet(
     services_, services,
-    [this](py::handle h) { this->HandleAddedService(h); },
-    [this](py::handle h) { this->HandleRemovedService(h); });
+    [this](py::handle h) { HandleAddedService(h); },
+    [this](py::handle h) { HandleRemovedService(h); });
 
   UpdateEntitySet(
     waitables_, waitables,
-    [this](py::handle h) { this->HandleAddedWaitable(h); },
-    [this](py::handle h) { this->HandleRemovedWaitable(h); });
+    [this](py::handle h) { HandleAddedWaitable(h); },
+    [this](py::handle h) { HandleRemovedWaitable(h); });
 }
 
 void EventsExecutorBase::UpdateEntitySet(
