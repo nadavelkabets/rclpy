@@ -17,7 +17,7 @@
 #define RCLPY__EVENTS_EXECUTOR__SCOPED_WITH_HPP_
 
 #include <pybind11/pybind11.h>
-
+namespace py = pybind11;
 namespace rclpy
 {
 namespace events_executor
@@ -27,16 +27,19 @@ namespace events_executor
 class ScopedWith
 {
 public:
-  explicit ScopedWith(pybind11::handle object)
-  : object_(pybind11::cast<pybind11::object>(object))
+  explicit ScopedWith(py::handle object)
+  : object_(py::cast<py::object>(object))
   {
     object_.attr("__enter__")();
   }
 
-  ~ScopedWith() {object_.attr("__exit__")(pybind11::none(), pybind11::none(), pybind11::none());}
+  ~ScopedWith() {
+    py::gil_scoped_acquire gil_acquire;
+    object_.attr("__exit__")(py::none(), py::none(), py::none());
+    }
 
 private:
-  pybind11::object object_;
+  py::object object_;
 };
 
 }  // namespace events_executor

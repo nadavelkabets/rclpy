@@ -72,6 +72,8 @@ protected:
   RclCallbackManager rcl_callback_manager_;
   EventsQueue events_queue_;
 
+  virtual pybind11::object create_task(
+    pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
   /// Given an existing set of entities and a set with the desired new state, updates the existing
   /// set and invokes callbacks on each added or removed entity.
   void UpdateEntitySet(
@@ -81,7 +83,7 @@ protected:
   virtual const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
-  virtual void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
+  void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
   virtual void HandleAddedTimer(pybind11::handle);
   virtual void HandleRemovedTimer(pybind11::handle);
   virtual void HandleAddedClient(pybind11::handle);

@@ -275,6 +275,7 @@ void EventsExecutorBase::UpdateEntitySet(
 const void * EventsExecutor::WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with)
 {
   std::function<void(size_t number_of_events)> cb = [this, callback, with](size_t number_of_events){events_queue_.Enqueue(
+    // Capturing 'with' here ensures that the subscription object stays alive until the task executes
     [this, callback, number_of_events, with](){callback(number_of_events);}
   );};
   return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
@@ -314,6 +315,12 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   if (stop_after_user_callback_) {
     events_queue_.Stop();
   }
+  EventsExecutorBase::HandleSubscriptionReady(subscription, number_of_events);
+  PostOutstandingTasks();
+}
+
+void EventsExecutorBase::HandleSubscriptionReady(py::handle subscription, size_t number_of_events)
+{
   py::gil_scoped_acquire gil_acquire;
 
   // Largely based on rclpy.Executor._take_subscription() and _execute_subcription().
@@ -327,7 +334,7 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   const int callback_type = py::cast<int>(subscription.attr("_callback_type").attr("value"));
   const int message_only =
     py::cast<int>(subscription.attr("CallbackType").attr("MessageOnly").attr("value"));
-  const py::handle callback = subscription.attr("callback");
+  const py::object callback = subscription.attr("callback");
 
   // rmw_cyclonedds has a bug which causes number_of_events to be zero in the case where messages
   // were waiting for us when we registered the callback, and the topic is using KEEP_ALL history
@@ -337,22 +344,15 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   for (size_t i = 0; number_of_events ? i < number_of_events : !got_none; ++i) {
     py::object msg_info = _rclpy_sub.take_message(msg_type, raw);
     if (!msg_info.is_none()) {
-      try {
-        if (callback_type == message_only) {
-          callback(py::cast<py::tuple>(msg_info)[0]);
-        } else {
-          callback(msg_info);
-        }
-      } catch (const py::error_already_set & e) {
-        HandleCallbackExceptionInNodeEntity(e, subscription, "subscriptions");
-        throw;
+      if (callback_type == message_only) {
+        create_task(callback, py::cast<py::tuple>(msg_info)[0]);
+      } else {
+        create_task(callback, msg_info);
       }
     } else {
       got_none = true;
     }
   }
-
-  PostOutstandingTasks();
 }
 
 void EventsExecutor::HandleAddedTimer(py::handle timer) {timers_manager_.AddTimer(timer);}
