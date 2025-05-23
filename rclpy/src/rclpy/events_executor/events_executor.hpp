@@ -48,7 +48,6 @@ namespace events_executor
 class EventsExecutorBase
 {
 public:
-  explicit EventsExecutorBase(std::function<void(std::function<void()>)> enqueue_callback);
   void wake();
   bool add_node(pybind11::object node);
   void remove_node(pybind11::handle node);
@@ -70,8 +69,8 @@ protected:
   pybind11::set nodes_;                ///< The set of all nodes we're executing
 
   std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
-  
   RclCallbackManager rcl_callback_manager_;
+  EventsQueue events_queue_;
 
   /// Given an existing set of entities and a set with the desired new state, updates the existing
   /// set and invokes callbacks on each added or removed entity.
@@ -79,7 +78,7 @@ protected:
     pybind11::set & entity_set, const pybind11::set & new_entity_set,
     std::function<void(pybind11::handle)> added_entity_callback,
     std::function<void(pybind11::handle)> removed_entity_callback);
-
+  virtual const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
   virtual void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
@@ -91,7 +90,7 @@ protected:
   virtual void HandleRemovedService(pybind11::handle);
   virtual void HandleAddedWaitable(pybind11::handle);
   virtual void HandleRemovedWaitable(pybind11::handle);
-  virtual void on_wake();
+  virtual void OnWake();
 };
 
 /// Events executor implementation for rclpy
@@ -108,7 +107,6 @@ class EventsExecutor : public EventsExecutorBase
 public:
   /// @param context the rclpy Context object to operate on
   explicit EventsExecutor(pybind11::object context);
-
   ~EventsExecutor();
 
   // rclpy Executor API methods:
@@ -134,7 +132,8 @@ private:
     std::vector<const rcl_event_t *> events;
   };
 
-  void on_wake();
+  const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
+  void OnWake();
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
@@ -202,7 +201,6 @@ private:
   const pybind11::object rclpy_task_;
   const pybind11::object rclpy_timer_timer_info_;
 
-  EventsQueue events_queue_;
   ScopedSignalCallback signal_callback_;
   
   std::timed_mutex spinning_mutex_;    ///< Held while a thread is spinning

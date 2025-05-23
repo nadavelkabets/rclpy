@@ -17,7 +17,8 @@ public:
 
 private:
   py::handle ex_;
-  void on_wake();
+  void OnWake();
+  void CallSoon(std::function<void()> callback);
 };
 
 void define_asyncio_executor(pybind11::object module);

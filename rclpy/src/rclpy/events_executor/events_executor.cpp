@@ -47,11 +47,6 @@ namespace rclpy
 namespace events_executor
 {
 
-EventsExecutorBase::EventsExecutorBase(std::function<void(std::function<void()>)> enqueue_callback)
-: rcl_callback_manager_(std::move(enqueue_callback))
-{
-}
-
 EventsExecutor::EventsExecutor(py::object context)
 : rclpy_context_(context),
   inspect_iscoroutine_(py::module_::import("inspect").attr("iscoroutine")),
@@ -59,7 +54,6 @@ EventsExecutor::EventsExecutor(py::object context)
   rclpy_task_(py::module_::import("rclpy.task").attr("Task")),
   rclpy_timer_timer_info_(py::module_::import("rclpy.timer").attr("TimerInfo")),
   signal_callback_([this]() {events_queue_.Stop();}),
-  EventsExecutorBase([this](std::function<void()> callback) {events_queue_.Enqueue(std::move(callback));}),
   timers_manager_(
     &events_queue_, std::bind(&EventsExecutor::HandleTimerReady, this, pl::_1, pl::_2))
 {
@@ -136,11 +130,11 @@ void EventsExecutorBase::remove_node(py::handle node)
 void EventsExecutorBase::wake()
 {
   if (!wake_pending_.exchange(true)) {
-    on_wake();
+    OnWake();
   }
 }
 
-void EventsExecutor::on_wake()
+void EventsExecutor::OnWake()
 {
   events_queue_.Enqueue([this]() {
       py::gil_scoped_acquire gil_acquire;
@@ -278,16 +272,24 @@ void EventsExecutorBase::UpdateEntitySet(
   entity_set = new_entity_set;
 }
 
+const void * EventsExecutor::WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with)
+{
+  std::function<void(size_t number_of_events)> cb = [this, callback, with](size_t number_of_events){events_queue_.Enqueue(
+    [this, callback, number_of_events, with](){callback(number_of_events);}
+  );};
+  return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
+}
+
 void EventsExecutorBase::HandleAddedSubscription(py::handle subscription)
 {
   py::handle handle = subscription.attr("handle");
   auto with = std::make_shared<ScopedWith>(handle);
   const rcl_subscription_t * rcl_ptr = py::cast<const Subscription &>(handle).rcl_ptr();
-  const auto cb = [this, subscription](size_t number_of_events) {HandleSubscriptionReady(subscription, number_of_events);};
+  const auto cb = WrapCallback(rcl_ptr, [this, subscription](size_t number_of_events) {HandleSubscriptionReady(subscription, number_of_events);}, with);
   if (
     RCL_RET_OK != rcl_subscription_set_on_new_message_callback(
                     rcl_ptr, RclEventCallbackTrampoline,
-                    rcl_callback_manager_.MakeCallback(rcl_ptr, cb, with)))
+                    std::move(cb)))
   {
     throw std::runtime_error(
       std::string("Failed to set the on new message callback for subscription: ") +

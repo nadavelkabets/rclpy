@@ -13,7 +13,14 @@ AsyncioExecutor::AsyncioExecutor(py::handle ex)
 {
 }
 
-void AsyncioExecutor::on_wake()
+void AsyncioExecutor::CallSoon(std::function<void()> callback)
+{
+  py::gil_scoped_acquire gil_acquire;
+  py::handle loop = ex_.attr("get_loop")();
+  loop.attr("call_soon_threadsafe")(callback);
+}
+
+void AsyncioExecutor::OnWake()
 {
   UpdateEntitiesFromNodes();
 }
