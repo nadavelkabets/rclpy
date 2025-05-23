@@ -315,12 +315,6 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   if (stop_after_user_callback_) {
     events_queue_.Stop();
   }
-  EventsExecutorBase::HandleSubscriptionReady(subscription, number_of_events);
-  PostOutstandingTasks();
-}
-
-void EventsExecutorBase::HandleSubscriptionReady(py::handle subscription, size_t number_of_events)
-{
   py::gil_scoped_acquire gil_acquire;
 
   // Largely based on rclpy.Executor._take_subscription() and _execute_subcription().
@@ -353,6 +347,8 @@ void EventsExecutorBase::HandleSubscriptionReady(py::handle subscription, size_t
       got_none = true;
     }
   }
+  PostOutstandingTasks();
+
 }
 
 void EventsExecutor::HandleAddedTimer(py::handle timer) {timers_manager_.AddTimer(timer);}
@@ -397,16 +393,16 @@ void EventsExecutor::HandleTimerReady(py::handle timer, const rcl_timer_call_inf
   PostOutstandingTasks();
 }
 
-void EventsExecutor::HandleAddedClient(py::handle client)
+void EventsExecutorBase::HandleAddedClient(py::handle client)
 {
   py::handle handle = client.attr("handle");
   auto with = std::make_shared<ScopedWith>(handle);
   const rcl_client_t * rcl_ptr = py::cast<const Client &>(handle).rcl_ptr();
-  const auto cb = std::bind(&EventsExecutor::HandleClientReady, this, client, pl::_1);
+  const auto cb = WrapCallback(rcl_ptr, [this, client](size_t number_of_events){HandleClientReady(client, number_of_events);}, with);
   if (
     RCL_RET_OK != rcl_client_set_on_new_response_callback(
                     rcl_ptr, RclEventCallbackTrampoline,
-                    rcl_callback_manager_.MakeCallback(rcl_ptr, cb, with)))
+                    std::move(cb)))
   {
     throw std::runtime_error(
       std::string("Failed to set the on new response callback for client: ") +
@@ -414,7 +410,7 @@ void EventsExecutor::HandleAddedClient(py::handle client)
   }
 }
 
-void EventsExecutor::HandleRemovedClient(py::handle client)
+void EventsExecutorBase::HandleRemovedClient(py::handle client)
 {
   py::handle handle = client.attr("handle");
   const rcl_client_t * rcl_ptr = py::cast<const Client &>(handle).rcl_ptr();
@@ -474,11 +470,11 @@ void EventsExecutor::HandleAddedService(py::handle service)
   py::handle handle = service.attr("handle");
   auto with = std::make_shared<ScopedWith>(handle);
   const rcl_service_t * rcl_ptr = py::cast<const Service &>(handle).rcl_ptr();
-  const auto cb = std::bind(&EventsExecutor::HandleServiceReady, this, service, pl::_1);
+  const auto cb = WrapCallback(rcl_ptr, [this, service](size_t number_of_events){HandleServiceReady(service, number_of_events);}, with);
   if (
     RCL_RET_OK != rcl_service_set_on_new_request_callback(
                     rcl_ptr, RclEventCallbackTrampoline,
-                    rcl_callback_manager_.MakeCallback(rcl_ptr, cb, with)))
+                    std::move(cb)))
   {
     throw std::runtime_error(
       std::string("Failed to set the on new request callback for service: ") +

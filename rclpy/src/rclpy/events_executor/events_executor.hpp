@@ -81,17 +81,25 @@ protected:
     std::function<void(pybind11::handle)> added_entity_callback,
     std::function<void(pybind11::handle)> removed_entity_callback);
   virtual const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
+  
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
-  void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
+  virtual void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
+
   virtual void HandleAddedTimer(pybind11::handle);
   virtual void HandleRemovedTimer(pybind11::handle);
-  virtual void HandleAddedClient(pybind11::handle);
-  virtual void HandleRemovedClient(pybind11::handle);
-  virtual void HandleAddedService(pybind11::handle);
-  virtual void HandleRemovedService(pybind11::handle);
+
+  void HandleAddedClient(pybind11::handle);
+  void HandleRemovedClient(pybind11::handle);
+  virtual void HandleClientReady(pybind11::handle, size_t number_of_events);
+
+  void HandleAddedService(pybind11::handle);
+  void HandleRemovedService(pybind11::handle);
+  virtual void HandleServiceReady(pybind11::handle, size_t number_of_events);
+
   virtual void HandleAddedWaitable(pybind11::handle);
   virtual void HandleRemovedWaitable(pybind11::handle);
+
   virtual void OnWake();
 };
 
@@ -136,8 +144,6 @@ private:
 
   const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
   void OnWake();
-  void HandleAddedSubscription(pybind11::handle);
-  void HandleRemovedSubscription(pybind11::handle);
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
 
   void HandleAddedTimer(pybind11::handle);
