@@ -1,5 +1,6 @@
 #include "asyncio_executor.hpp"
 #include "events_executor/rcl_support.hpp"
+#include "pybind11/functional.h"
 
 namespace py = pybind11;
 
@@ -8,39 +9,33 @@ namespace rclpy
 namespace asyncio_executor
 {
 
-AsyncioExecutor::AsyncioExecutor(py::object ex)
-: ex_(ex),
-  get_loop_(ex_.attr("get_loop")),
-  create_task_(ex.attr("create_task"))
+AsyncioExecutor::AsyncioExecutor()
 {
 }
 
-const void * AsyncioExecutor::WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with)
+const void * AsyncioExecutor::WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with)
 {
-  std::function<void(size_t number_of_events)> cb = [this, callback, with](size_t number_of_events){CallSoon(
-    // Capturing 'with' here ensures that the subscription object stays alive until the task executes
-    [this, callback, number_of_events, with](){callback(number_of_events);}
-  );};
+  std::function<void(size_t n)> cb = [this, callback, with](size_t number_of_events){
+    py::gil_scoped_acquire gil_acquire;
+    callback(number_of_events);
+  };
   return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
 }
 
-void AsyncioExecutor::CallSoon(std::function<void()> callback)
+void AsyncioExecutor::add_subscription(py::object subscription, std::function<void(size_t n)> callback)
 {
-  py::gil_scoped_acquire gil_acquire;
-  py::handle loop = get_loop_();
-  loop.attr("call_soon_threadsafe")(callback);
+  RegisterEventCallback<
+    rcl_subscription_set_on_new_message_callback,
+    rcl_subscription_t,
+    Subscription>(subscription, std::move(callback));
 }
 
-
-pybind11::object AsyncioExecutor::create_task(
-    pybind11::object callback, pybind11::args args, const pybind11::kwargs & kwargs)
+void AsyncioExecutor::remove_subscription(py::object subscription)
 {
-  return create_task_(callback, args, kwargs);
-}
-
-void AsyncioExecutor::OnWake()
-{
-  UpdateEntitiesFromNodes();
+  ClearEventCallback<
+    rcl_subscription_set_on_new_message_callback,
+    rcl_subscription_t,
+    Subscription>(subscription);
 }
 
 // pybind11 module bindings

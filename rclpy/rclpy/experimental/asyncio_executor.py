@@ -1,5 +1,5 @@
 from types import TracebackType
-from typing import Any, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, Set
 from rclpy.executors import ExecutorBase
 import asyncio
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
@@ -8,6 +8,11 @@ from contextlib import contextmanager
 import rclpy
 from rclpy.executors import await_or_execute
 from rclpy.node import Node
+from rclpy.subscription import Subscription
+from rclpy.timer import Timer
+from rclpy.client import Client
+from rclpy.service import Service
+from functools import partial
 
 @contextmanager
 def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractEventLoop):
@@ -21,9 +26,14 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
 
 class AsyncioExecutor(ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
-        self.__executor = _rclpy.AsyncioExecutor(self)
-        self._tasks = set()
-        self._stop_after_user_callback = False   
+        self.__executor = _rclpy.AsyncioExecutor()
+        self._tasks: Set[asyncio.Task] = set()
+        self._nodes: Set[Node] = set()
+        self._subscriptions: Set[Subscription] = set()
+        self._timers: Set[Timer] = set()
+        self._clients: Set[Client] = set()
+        self._services: Set[Service] = set()
+        self._stop_after_user_callback = False
         if loop:
             self._loop = loop
         else:
@@ -130,18 +140,76 @@ class AsyncioExecutor(ExecutorBase):
         self._detach_from_loop()
 
     def wake(self):
-        self.__executor.wake()
+        self._update_entities_from_nodes()
 
     def add_node(self, node: Node):
-        return self.__executor.add_node(node)
+        if node in self._nodes:
+            return False
+        
+        self._nodes.add(node)
+        node.executor = self
+        self._update_entities_from_nodes()
+        return True
 
     def remove_node(self, node: Node):
-        self.__executor.remove_node(node)
+        if node not in self._nodes:
+            return
+        
+        self._nodes.remove(node)
+        self._update_entities_from_nodes()
 
     def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
         _chain_future(rclpy_future, asyncio_future)
         return asyncio_future
+    
+    def _update_entities_from_nodes(self):
+        subscriptions, timers, clients, services, waitables = set(), set(), set(), set(), set()
+        for node in self._nodes:
+            subscriptions.update(node.subscriptions)
+            timers.update(node.timers)
+            clients.update(node.clients)
+            services.update(node.services)
+            waitables.update(node.waitables)
+            if getattr(node, 'guards', None):
+                raise RuntimeError("Guard conditions not supported")
+
+        # Sync each entity category
+        self._update_entity_set(
+            self._subscriptions, 
+            subscriptions,
+            self._add_subscription,
+            self.__executor.remove_subscription
+        )
+
+    def _make_callback(self, callback: Callable[[], None]) -> Callable[[], None]:
+        return partial(self._loop.call_soon_threadsafe, callback)
+
+    def _add_subscription(self, subscription: Subscription):
+        callback = partial(self._handle_ready_subscription, subscription)
+        self.__executor.add_subscription(
+            subscription,
+            self._make_callback(callback)
+        )
+    
+    def _handle_ready_subscription(subscription)
+
+    def _update_entity_set(
+        self,
+        current_set: set,
+        new_set: set,
+        added_cb: Callable[[Any], None],
+        removed_cb: Callable[[Any], None]
+    ) -> None:
+        # Handle additions
+        for h in new_set - current_set:
+            current_set.add(h)
+            added_cb(h)
+            
+        # Handle removals
+        for h in current_set - new_set:
+            current_set.remove(h)
+            removed_cb(h)
         
 def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
     """Chain two futures so that when one completes, so does the other.

@@ -14,18 +14,13 @@ namespace asyncio_executor
 class AsyncioExecutor : public EventsExecutorBase
 {
 public:
-  explicit AsyncioExecutor(py::object ex);
+  explicit AsyncioExecutor();
   ~AsyncioExecutor();
+  void add_subscription(py::object subscription, std::function<void(size_t n)> callback);
+  void remove_subscription(py::object subscription);
 
 private:
-  const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
-  pybind11::object create_task(
-    pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
-  py::handle ex_;
-  py::handle get_loop_;
-  py::handle create_task_;
-  void OnWake();
-  void CallSoon(std::function<void()> callback);
+  const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
 };
 
 void define_asyncio_executor(pybind11::object module);

@@ -103,7 +103,7 @@ bool EventsExecutor::shutdown(std::optional<double> timeout)
   return true;
 }
 
-bool EventsExecutorBase::add_node(py::object node)
+bool EventsExecutor::add_node(py::object node)
 {
   if (nodes_.contains(node)) {
     return false;
@@ -116,7 +116,7 @@ bool EventsExecutorBase::add_node(py::object node)
   return true;
 }
 
-void EventsExecutorBase::remove_node(py::handle node)
+void EventsExecutor::remove_node(py::handle node)
 {
   if (!nodes_.contains(node)) {
     return;
@@ -127,27 +127,22 @@ void EventsExecutorBase::remove_node(py::handle node)
   wake();
 }
 
-void EventsExecutorBase::wake()
+void EventsExecutor::wake()
 {
   if (!wake_pending_.exchange(true)) {
-    OnWake();
+    events_queue_.Enqueue([this]() {
+        py::gil_scoped_acquire gil_acquire;
+        if(!py::cast<bool>(rclpy_context_.attr("ok")()))
+        {
+          events_queue_.Stop();
+        }
+        UpdateEntitiesFromNodes();
+    }
+    );
   }
 }
 
-void EventsExecutor::OnWake()
-{
-  events_queue_.Enqueue([this]() {
-      py::gil_scoped_acquire gil_acquire;
-      if(!py::cast<bool>(rclpy_context_.attr("ok")()))
-      {
-        events_queue_.Stop();
-      }
-      UpdateEntitiesFromNodes();
-  }
-  );
-}
-
-py::list EventsExecutorBase::get_nodes() const {return nodes_;}
+py::list EventsExecutor::get_nodes() const {return nodes_;}
 
 // NOTE: The timeouts on the below two methods are always realtime even if we're running in debug
 // time.  This is true of other executors too, because debug time is always associated with a
@@ -201,7 +196,7 @@ void EventsExecutor::spin_until_future_complete(
 EventsExecutor * EventsExecutor::enter() {return this;}
 void EventsExecutor::exit(py::object, py::object, py::object) {shutdown();}
 
-void EventsExecutorBase::UpdateEntitiesFromNodes()
+void EventsExecutor::UpdateEntitiesFromNodes()
 {
   // Clear pending flag as early as possible, so we error on the side of retriggering a few
   // harmless updates rather than potentially missing important additions.
@@ -254,7 +249,7 @@ void EventsExecutorBase::UpdateEntitiesFromNodes()
     [this](py::handle h) { HandleRemovedWaitable(h); });
 }
 
-void EventsExecutorBase::UpdateEntitySet(
+void EventsExecutor::UpdateEntitySet(
   py::set & entity_set, const py::set & new_entity_set,
   std::function<void(py::handle)> added_entity_callback,
   std::function<void(py::handle)> removed_entity_callback)
@@ -281,34 +276,75 @@ const void * EventsExecutor::WrapCallback(const void * key, std::function<void(s
   return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
 }
 
-void EventsExecutorBase::HandleAddedSubscription(py::handle subscription)
+void EventsExecutor::HandleAddedClient(py::handle client)
 {
-  py::handle handle = subscription.attr("handle");
-  auto with = std::make_shared<ScopedWith>(handle);
-  const rcl_subscription_t * rcl_ptr = py::cast<const Subscription &>(handle).rcl_ptr();
-  const auto cb = WrapCallback(rcl_ptr, [this, subscription](size_t number_of_events) {HandleSubscriptionReady(subscription, number_of_events);}, with);
-  if (
-    RCL_RET_OK != rcl_subscription_set_on_new_message_callback(
-                    rcl_ptr, RclEventCallbackTrampoline,
-                    std::move(cb)))
-  {
-    throw std::runtime_error(
-      std::string("Failed to set the on new message callback for subscription: ") +
-      rcl_get_error_string().str);
-  }
+  RegisterEventCallback<
+    rcl_client_set_on_new_response_callback,
+    rcl_client_t,
+    Client>(
+      client,
+      [this, client](size_t number_of_events) {
+        HandleClientReady(client, number_of_events);
+      }
+  );
 }
 
-void EventsExecutorBase::HandleRemovedSubscription(py::handle subscription)
+void EventsExecutor::HandleRemovedClient(py::handle client)
 {
-  py::handle handle = subscription.attr("handle");
-  const rcl_subscription_t * rcl_ptr = py::cast<const Subscription &>(handle).rcl_ptr();
-  if (RCL_RET_OK != rcl_subscription_set_on_new_message_callback(rcl_ptr, nullptr, nullptr)) {
-    throw std::runtime_error(
-      std::string("Failed to clear the on new message callback for subscription: ") +
-      rcl_get_error_string().str);
-  }
-  rcl_callback_manager_.RemoveCallback(rcl_ptr);
+  ClearEventCallback<
+    rcl_client_set_on_new_response_callback,
+    rcl_client_t,
+    Client>(
+      client
+  );
 }
+
+void EventsExecutor::HandleAddedSubscription(py::handle subscription)
+{
+  RegisterEventCallback<
+    rcl_subscription_set_on_new_message_callback,
+    rcl_subscription_t,
+    Subscription>(
+      subscription,
+      [this, subscription](size_t number_of_events) {
+        HandleSubscriptionReady(subscription, number_of_events);
+      }
+  );
+}
+
+void EventsExecutor::HandleRemovedSubscription(py::handle subscription)
+{
+  ClearEventCallback<
+    rcl_subscription_set_on_new_message_callback,
+    rcl_subscription_t,
+    Subscription>(
+      subscription
+  );
+}
+
+void EventsExecutor::HandleAddedService(py::handle service)
+{
+  RegisterEventCallback<
+    rcl_service_set_on_new_request_callback,
+    rcl_service_t,
+    Service>(
+      service,
+      [this, service](size_t number_of_events) {
+        HandleServiceReady(service, number_of_events);
+      }
+  );
+}
+
+void EventsExecutor::HandleRemovedService(py::handle service)
+{
+  ClearEventCallback<
+    rcl_service_set_on_new_request_callback,
+    rcl_service_t,
+    Service>(
+      service
+  );
+}
+
 
 void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t number_of_events)
 {
@@ -393,35 +429,6 @@ void EventsExecutor::HandleTimerReady(py::handle timer, const rcl_timer_call_inf
   PostOutstandingTasks();
 }
 
-void EventsExecutorBase::HandleAddedClient(py::handle client)
-{
-  py::handle handle = client.attr("handle");
-  auto with = std::make_shared<ScopedWith>(handle);
-  const rcl_client_t * rcl_ptr = py::cast<const Client &>(handle).rcl_ptr();
-  const auto cb = WrapCallback(rcl_ptr, [this, client](size_t number_of_events){HandleClientReady(client, number_of_events);}, with);
-  if (
-    RCL_RET_OK != rcl_client_set_on_new_response_callback(
-                    rcl_ptr, RclEventCallbackTrampoline,
-                    std::move(cb)))
-  {
-    throw std::runtime_error(
-      std::string("Failed to set the on new response callback for client: ") +
-      rcl_get_error_string().str);
-  }
-}
-
-void EventsExecutorBase::HandleRemovedClient(py::handle client)
-{
-  py::handle handle = client.attr("handle");
-  const rcl_client_t * rcl_ptr = py::cast<const Client &>(handle).rcl_ptr();
-  if (RCL_RET_OK != rcl_client_set_on_new_response_callback(rcl_ptr, nullptr, nullptr)) {
-    throw std::runtime_error(
-      std::string("Failed to clear the on new response callback for client: ") +
-      rcl_get_error_string().str);
-  }
-  rcl_callback_manager_.RemoveCallback(rcl_ptr);
-}
-
 void EventsExecutor::HandleClientReady(py::handle client, size_t number_of_events)
 {
   if (stop_after_user_callback_) {
@@ -463,35 +470,6 @@ void EventsExecutor::HandleClientReady(py::handle client, size_t number_of_event
   }
 
   PostOutstandingTasks();
-}
-
-void EventsExecutor::HandleAddedService(py::handle service)
-{
-  py::handle handle = service.attr("handle");
-  auto with = std::make_shared<ScopedWith>(handle);
-  const rcl_service_t * rcl_ptr = py::cast<const Service &>(handle).rcl_ptr();
-  const auto cb = WrapCallback(rcl_ptr, [this, service](size_t number_of_events){HandleServiceReady(service, number_of_events);}, with);
-  if (
-    RCL_RET_OK != rcl_service_set_on_new_request_callback(
-                    rcl_ptr, RclEventCallbackTrampoline,
-                    std::move(cb)))
-  {
-    throw std::runtime_error(
-      std::string("Failed to set the on new request callback for service: ") +
-      rcl_get_error_string().str);
-  }
-}
-
-void EventsExecutor::HandleRemovedService(py::handle service)
-{
-  py::handle handle = service.attr("handle");
-  const rcl_service_t * rcl_ptr = py::cast<const Service &>(handle).rcl_ptr();
-  if (RCL_RET_OK != rcl_service_set_on_new_request_callback(rcl_ptr, nullptr, nullptr)) {
-    throw std::runtime_error(
-      std::string("Failed to clear the on new request callback for service: ") +
-      rcl_get_error_string().str);
-  }
-  rcl_callback_manager_.RemoveCallback(rcl_ptr);
 }
 
 void EventsExecutor::HandleServiceReady(py::handle service, size_t number_of_events)

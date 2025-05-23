@@ -27,19 +27,22 @@ namespace events_executor
 class ScopedWith
 {
 public:
-  explicit ScopedWith(py::handle object)
-  : object_(py::cast<py::object>(object))
+  explicit ScopedWith(py::handle handle)
+  : handle_(handle)
   {
-    object_.attr("__enter__")();
+    py::gil_scoped_acquire gil_acquire;
+    handle_.inc_ref();
+    handle_.attr("__enter__")();
   }
 
   ~ScopedWith() {
     py::gil_scoped_acquire gil_acquire;
-    object_.attr("__exit__")(py::none(), py::none(), py::none());
+    handle_.attr("__exit__")(py::none(), py::none(), py::none());
+    handle_.dec_ref();
     }
 
 private:
-  py::object object_;
+  py::handle handle_;
 };
 
 }  // namespace events_executor

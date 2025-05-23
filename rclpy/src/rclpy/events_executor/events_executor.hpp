@@ -47,60 +47,57 @@ namespace events_executor
 
 class EventsExecutorBase
 {
-public:
-  void wake();
-  bool add_node(pybind11::object node);
-  void remove_node(pybind11::handle node);
-  pybind11::list get_nodes() const;
-
 protected:
-  /// Updates the sets of known entities based on the currently tracked nodes.  This is not thread
-  /// safe, so it must be posted to the EventsQueue if the executor is currently spinning.  Expects
-  /// the GIL to be held before calling.  If @p shutdown is true, a purge of all known nodes and
-  /// entities is forced.
-  void UpdateEntitiesFromNodes();
-
-  // Collection of awaitable entities we're servicing
-  pybind11::set subscriptions_;
-  pybind11::set timers_;
-  pybind11::set clients_;
-  pybind11::set services_;
-  pybind11::set waitables_;
-  pybind11::set nodes_;                ///< The set of all nodes we're executing
-
-  std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
   RclCallbackManager rcl_callback_manager_;
-  EventsQueue events_queue_;
+  virtual const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
+  template<auto RegisterFun, typename RclPtrT, typename PyClass, typename ReadyHandler>
+  void RegisterEventCallback(
+    py::handle py_obj,
+    ReadyHandler ready_handler)
+  {
+    // Extract ROS handle and scoped guard
+    py::handle handle = py_obj.attr("handle");
+    auto with = std::make_shared<ScopedWith>(handle);
+    const RclPtrT* rcl_ptr = py::cast<const PyClass&>(handle).rcl_ptr();
 
-  virtual pybind11::object create_task(
-    pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
-  /// Given an existing set of entities and a set with the desired new state, updates the existing
-  /// set and invokes callbacks on each added or removed entity.
-  void UpdateEntitySet(
-    pybind11::set & entity_set, const pybind11::set & new_entity_set,
-    std::function<void(pybind11::handle)> added_entity_callback,
-    std::function<void(pybind11::handle)> removed_entity_callback);
-  virtual const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
-  
-  void HandleAddedSubscription(pybind11::handle);
-  void HandleRemovedSubscription(pybind11::handle);
-  virtual void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
+    // Wrap the callback using virtual method
+    auto cb = WrapCallback(rcl_ptr, ready_handler, with);
 
-  virtual void HandleAddedTimer(pybind11::handle);
-  virtual void HandleRemovedTimer(pybind11::handle);
+    // Only compute entity_name on error
+    if (RCL_RET_OK != RegisterFun(rcl_ptr,
+                                    RclEventCallbackTrampoline,
+                                    std::move(cb)))
+    {
+      std::string entity_name = py_obj
+        .attr("__class__").attr("__name__")
+        .attr("lower")().cast<std::string>();
+      throw std::runtime_error(
+        std::string("Failed to set the callback for ") + entity_name +
+        ": " + rcl_get_error_string().str);
+    }
+  }
 
-  void HandleAddedClient(pybind11::handle);
-  void HandleRemovedClient(pybind11::handle);
-  virtual void HandleClientReady(pybind11::handle, size_t number_of_events);
+  // Template helper: clear and remove an existing event callback (member)
+  template<auto ClearFun, typename RclPtrT, typename PyClass>
+  void ClearEventCallback(
+    py::handle py_obj)
+  {
+    // Extract ROS handle
+    py::handle handle = py_obj.attr("handle");
+    const RclPtrT* rcl_ptr = py::cast<const PyClass&>(handle).rcl_ptr();
 
-  void HandleAddedService(pybind11::handle);
-  void HandleRemovedService(pybind11::handle);
-  virtual void HandleServiceReady(pybind11::handle, size_t number_of_events);
-
-  virtual void HandleAddedWaitable(pybind11::handle);
-  virtual void HandleRemovedWaitable(pybind11::handle);
-
-  virtual void OnWake();
+    // Only compute entity_name on error
+    if (RCL_RET_OK != ClearFun(rcl_ptr, nullptr, nullptr)) {
+      std::string entity_name = py_obj
+        .attr("__class__").attr("__name__")
+        .attr("lower")().cast<std::string>();
+      throw std::runtime_error(
+        std::string("Failed to clear the callback for ") + entity_name +
+        ": " + rcl_get_error_string().str);
+    }
+    // Remove from manager
+    rcl_callback_manager_.RemoveCallback(rcl_ptr);
+  }
 };
 
 /// Events executor implementation for rclpy
@@ -115,6 +112,18 @@ protected:
 class EventsExecutor : public EventsExecutorBase
 {
 public:
+  void wake();
+  bool add_node(pybind11::object node);
+  void remove_node(pybind11::handle node);
+  pybind11::list get_nodes() const;
+  // Collection of awaitable entities we're servicing
+  pybind11::set subscriptions_;
+  pybind11::set timers_;
+  pybind11::set clients_;
+  pybind11::set services_;
+  pybind11::set waitables_;
+  pybind11::set nodes_;                ///< The set of all nodes we're executing
+  
   /// @param context the rclpy Context object to operate on
   explicit EventsExecutor(pybind11::object context);
   ~EventsExecutor();
@@ -132,6 +141,23 @@ public:
   void exit(pybind11::object, pybind11::object, pybind11::object);
 
 private:
+
+  void HandleAddedSubscription(pybind11::handle);
+  void HandleRemovedSubscription(pybind11::handle);
+  /// Given an existing set of entities and a set with the desired new state, updates the existing
+  /// set and invokes callbacks on each added or removed entity.
+  void UpdateEntitySet(
+    pybind11::set & entity_set, const pybind11::set & new_entity_set,
+    std::function<void(pybind11::handle)> added_entity_callback,
+    std::function<void(pybind11::handle)> removed_entity_callback);
+  EventsQueue events_queue_;
+  std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
+
+  /// Updates the sets of known entities based on the currently tracked nodes.  This is not thread
+  /// safe, so it must be posted to the EventsQueue if the executor is currently spinning.  Expects
+  /// the GIL to be held before calling.  If @p shutdown is true, a purge of all known nodes and
+  /// entities is forced.
+  void UpdateEntitiesFromNodes();
   // Structure to hold entities discovered underlying a Waitable object.
   struct WaitableSubEntities
   {
@@ -142,7 +168,7 @@ private:
     std::vector<const rcl_event_t *> events;
   };
 
-  const void * WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with);
+  const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
   void OnWake();
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
 
