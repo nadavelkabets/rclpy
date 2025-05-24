@@ -49,26 +49,21 @@ class EventsExecutorBase
 {
 protected:
   RclCallbackManager rcl_callback_manager_;
-  virtual const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
-  template<auto RegisterFun, typename RclPtrT, typename PyClass, typename ReadyHandler>
+  template<auto RegisterCallback, typename EntityT, typename PyEntity>
   void RegisterEventCallback(
-    py::handle py_obj,
-    ReadyHandler ready_handler)
+    py::handle entity,
+    std::function<void(size_t n)> ready_handler)
   {
     // Extract ROS handle and scoped guard
-    py::handle handle = py_obj.attr("handle");
+    py::handle handle = entity.attr("handle");
     auto with = std::make_shared<ScopedWith>(handle);
-    const RclPtrT* rcl_ptr = py::cast<const PyClass&>(handle).rcl_ptr();
-
-    // Wrap the callback using virtual method
-    auto cb = WrapCallback(rcl_ptr, ready_handler, with);
+    auto rcl_ptr = rcl_callback_manager_.GetKey<EntityT *>(handle);
+    auto cb = rcl_callback_manager_.MakeCallback(rcl_ptr, std::move(ready_handler), with);
 
     // Only compute entity_name on error
-    if (RCL_RET_OK != RegisterFun(rcl_ptr,
-                                    RclEventCallbackTrampoline,
-                                    std::move(cb)))
+    if (RCL_RET_OK != RegisterCallback(rcl_ptr, RclEventCallbackTrampoline, std::move(cb)))
     {
-      std::string entity_name = py_obj
+      std::string entity_name = entity
         .attr("__class__").attr("__name__")
         .attr("lower")().cast<std::string>();
       throw std::runtime_error(
@@ -78,17 +73,17 @@ protected:
   }
 
   // Template helper: clear and remove an existing event callback (member)
-  template<auto ClearFun, typename RclPtrT, typename PyClass>
+  template<auto ClearFun, typename EntityT, typename PyEntity>
   void ClearEventCallback(
-    py::handle py_obj)
+    py::handle entity)
   {
     // Extract ROS handle
-    py::handle handle = py_obj.attr("handle");
-    const RclPtrT* rcl_ptr = py::cast<const PyClass&>(handle).rcl_ptr();
+    py::handle handle = entity.attr("handle");
+    auto rcl_ptr = rcl_callback_manager_.GetKey<EntityT *>(handle);
 
     // Only compute entity_name on error
     if (RCL_RET_OK != ClearFun(rcl_ptr, nullptr, nullptr)) {
-      std::string entity_name = py_obj
+      std::string entity_name = entity
         .attr("__class__").attr("__name__")
         .attr("lower")().cast<std::string>();
       throw std::runtime_error(
@@ -141,7 +136,7 @@ public:
   void exit(pybind11::object, pybind11::object, pybind11::object);
 
 private:
-
+  std::function<void(size_t n)> EnqueueCallback(py::handle entity, std::function<void(size_t n)> callback);
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);
   /// Given an existing set of entities and a set with the desired new state, updates the existing
@@ -168,7 +163,6 @@ private:
     std::vector<const rcl_event_t *> events;
   };
 
-  const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
   void OnWake();
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
 

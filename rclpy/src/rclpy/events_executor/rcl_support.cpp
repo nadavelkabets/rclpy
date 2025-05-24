@@ -44,6 +44,11 @@ RclCallbackManager::~RclCallbackManager()
   }
 }
 
+bool RclCallbackManager::HasCallback(const void * key)
+{
+  return owned_cbs_.count(key) > 0;
+}
+
 const void * RclCallbackManager::MakeCallback(
   const void * key, std::function<void(size_t)> callback, std::shared_ptr<ScopedWith> with)
 {

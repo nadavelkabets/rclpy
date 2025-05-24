@@ -18,9 +18,6 @@ public:
   ~AsyncioExecutor();
   void add_subscription(py::object subscription, std::function<void(size_t n)> callback);
   void remove_subscription(py::object subscription);
-
-private:
-  const void * WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with);
 };
 
 void define_asyncio_executor(pybind11::object module);

@@ -31,6 +31,8 @@ public:
   : handle_(handle)
   {
     py::gil_scoped_acquire gil_acquire;
+    // entities are removed from node before they are removed from executor
+    // we must hold reference to the handle to prevent it's destruction
     handle_.inc_ref();
     handle_.attr("__enter__")();
   }

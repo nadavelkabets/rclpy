@@ -58,6 +58,14 @@ public:
   /// MakeCallback().  Caution: ensure that RCL is no longer using a callback before invoking this.
   void RemoveCallback(const void * key);
 
+  bool HasCallback(const void * key);
+
+  template <typename EntityT>
+  EntityT GetKey(py::handle handle)
+  {
+    return py::cast<EntityT>(handle.attr("pointer"));
+  }
+
 private:
   /// The C RCL interface deals in raw pointers, so someone needs to own the C++ function objects
   /// we'll be calling into.  We use unique pointers so the raw pointer to the object remains

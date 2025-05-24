@@ -1,5 +1,6 @@
+from math import inf
 from types import TracebackType
-from typing import Any, Callable, Optional, Type, Set
+from typing import Any, Callable, Coroutine, Optional, Type, Set
 from rclpy.executors import ExecutorBase
 import asyncio
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
@@ -65,9 +66,8 @@ class AsyncioExecutor(ExecutorBase):
     #     for entity, number_of_events, callback in self._executor.ready_entities:
     #         callback(self.create_task, entity, number_of_events)
 
-    def _execute_entity(self, callback: Callable[..., Any], *args: Any, **kwargs: Any
-                    ) -> asyncio.Task:
-        task = self.create_task(callback, args, kwargs)
+    def _execute_entity(self, coro: Coroutine) -> asyncio.Task:
+        task = self._loop.create_task(coro)
         task.add_done_callback(self._exception_handler)
         self._tasks.add(task)
         return task
@@ -182,17 +182,21 @@ class AsyncioExecutor(ExecutorBase):
             self.__executor.remove_subscription
         )
 
-    def _make_callback(self, callback: Callable[[], None]) -> Callable[[], None]:
-        return partial(self._loop.call_soon_threadsafe, callback)
-
     def _add_subscription(self, subscription: Subscription):
-        callback = partial(self._handle_ready_subscription, subscription)
         self.__executor.add_subscription(
             subscription,
-            self._make_callback(callback)
+            # embedding subscription in the callback function keeps reference to the subscription
+            # to avoid destruction of the subscription while a callback is awaiting execution in the loop 
+            partial(self._handle_ready_subscription, subscription)
         )
-    
-    def _handle_ready_subscription(subscription)
+
+    def _handle_ready_subscription(self, subscription: Subscription, _: int):
+        while True:
+            coro = self._take_subscription(subscription)
+            if not coro:
+                break
+
+            self._execute_entity(coro())
 
     def _update_entity_set(
         self,

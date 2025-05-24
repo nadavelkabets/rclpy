@@ -13,15 +13,8 @@ AsyncioExecutor::AsyncioExecutor()
 {
 }
 
-const void * AsyncioExecutor::WrapCallback(const void * key, std::function<void(size_t n)> callback, std::shared_ptr<ScopedWith> with)
-{
-  std::function<void(size_t n)> cb = [this, callback, with](size_t number_of_events){
-    py::gil_scoped_acquire gil_acquire;
-    callback(number_of_events);
-  };
-  return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
-}
-
+// pybind takes care of converting the python function to a std::function for us and holding it's reference
+// the python function is a 
 void AsyncioExecutor::add_subscription(py::object subscription, std::function<void(size_t n)> callback)
 {
   RegisterEventCallback<

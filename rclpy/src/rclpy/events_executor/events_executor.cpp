@@ -267,13 +267,19 @@ void EventsExecutor::UpdateEntitySet(
   entity_set = new_entity_set;
 }
 
-const void * EventsExecutor::WrapCallback(const void * key, std::function<void(size_t number_of_events)> callback, std::shared_ptr<ScopedWith> with)
+std::function<void(size_t n)> EventsExecutor::EnqueueCallback(py::handle entity, std::function<void(size_t n)> callback)
 {
-  std::function<void(size_t number_of_events)> cb = [this, callback, with](size_t number_of_events){events_queue_.Enqueue(
-    // Capturing 'with' here ensures that the subscription object stays alive until the task executes
-    [this, callback, number_of_events, with](){callback(number_of_events);}
-  );};
-  return rcl_callback_manager_.MakeCallback(key, std::move(cb), with);
+    auto key = rcl_callback_manager_.GetKey<const void *>(entity);
+    return [this, callback, key](size_t number_of_events) {
+        events_queue_.Enqueue([this, callback, key, number_of_events]() {
+          if (!rcl_callback_manager_.HasCallback(key)) {
+            // This callback has been removed, just drop it as the objects it may want to touch may
+            // no longer exist.
+            return;
+          }
+          callback(number_of_events);
+      });
+    };
 }
 
 void EventsExecutor::HandleAddedClient(py::handle client)
@@ -283,9 +289,10 @@ void EventsExecutor::HandleAddedClient(py::handle client)
     rcl_client_t,
     Client>(
       client,
+      EnqueueCallback(client,
       [this, client](size_t number_of_events) {
         HandleClientReady(client, number_of_events);
-      }
+      })
   );
 }
 
@@ -306,9 +313,10 @@ void EventsExecutor::HandleAddedSubscription(py::handle subscription)
     rcl_subscription_t,
     Subscription>(
       subscription,
+      EnqueueCallback(subscription,
       [this, subscription](size_t number_of_events) {
         HandleSubscriptionReady(subscription, number_of_events);
-      }
+      })
   );
 }
 
@@ -329,9 +337,10 @@ void EventsExecutor::HandleAddedService(py::handle service)
     rcl_service_t,
     Service>(
       service,
+      EnqueueCallback(service,
       [this, service](size_t number_of_events) {
         HandleServiceReady(service, number_of_events);
-      }
+      })
   );
 }
 
@@ -384,7 +393,6 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
     }
   }
   PostOutstandingTasks();
-
 }
 
 void EventsExecutor::HandleAddedTimer(py::handle timer) {timers_manager_.AddTimer(timer);}
