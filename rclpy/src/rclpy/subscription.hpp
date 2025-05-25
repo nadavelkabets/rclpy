@@ -24,6 +24,7 @@
 
 #include "destroyable.hpp"
 #include "node.hpp"
+#include "callbackable.hpp"
 
 namespace py = pybind11;
 
@@ -35,7 +36,10 @@ namespace rclpy
  * This subscription will use the typesupport defined in the message module
  * provided as pymsg_type to send messages.
  */
-class Subscription : public Destroyable, public std::enable_shared_from_this<Subscription>
+class Subscription
+: public Destroyable, 
+  public Callbackable<rcl_subscription_t>, 
+  public std::enable_shared_from_this<Subscription>
 {
 public:
   /// Create a subscription
@@ -96,7 +100,7 @@ public:
 
   /// Get rcl_subscription_t pointer
   rcl_subscription_t *
-  rcl_ptr() const
+  rcl_ptr() const override
   {
     return rcl_subscription_.get();
   }
@@ -108,9 +112,11 @@ public:
 private:
   Node node_;
   std::shared_ptr<rcl_subscription_t> rcl_subscription_;
+  rcl_ret_t SetCallback(rcl_subscription_t * subscription, rcl_event_callback_t callback, const void * user_data) override;
 };
 /// Define a pybind11 wrapper for an rclpy::Subscription
 void define_subscription(py::object module);
+
 }  // namespace rclpy
 
 #endif  // RCLPY__SUBSCRIPTION_HPP_

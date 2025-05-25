@@ -181,6 +181,12 @@ Subscription::get_publisher_count() const
   return count;
 }
 
+rcl_ret_t
+Subscription::SetCallback(rcl_subscription_t * subscription, rcl_event_callback_t callback, const void * user_data)
+{
+  return rcl_subscription_set_on_new_message_callback(subscription, callback, user_data);
+}
+
 void
 define_subscription(py::object module)
 {
