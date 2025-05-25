@@ -98,8 +98,11 @@ bool EventsExecutor::shutdown(std::optional<double> timeout)
     }
   }
 
-  nodes_.clear();
-  UpdateEntitiesFromNodes();
+  // Tear down any callbacks we still have registered.
+  for (py::handle node : py::list(nodes_)) {
+    remove_node(node);
+  }
+  UpdateEntitiesFromNodes(true);
   return true;
 }
 
@@ -130,15 +133,11 @@ void EventsExecutor::remove_node(py::handle node)
 void EventsExecutor::wake()
 {
   if (!wake_pending_.exchange(true)) {
+    // Update tracked entities.
     events_queue_.Enqueue([this]() {
         py::gil_scoped_acquire gil_acquire;
-        if(!py::cast<bool>(rclpy_context_.attr("ok")()))
-        {
-          events_queue_.Stop();
-        }
-        UpdateEntitiesFromNodes();
-    }
-    );
+        UpdateEntitiesFromNodes(!py::cast<bool>(rclpy_context_.attr("ok")()));
+    });
   }
 }
 
@@ -196,7 +195,22 @@ void EventsExecutor::spin_until_future_complete(
 EventsExecutor * EventsExecutor::enter() {return this;}
 void EventsExecutor::exit(py::object, py::object, py::object) {shutdown();}
 
-void EventsExecutor::UpdateEntitiesFromNodes()
+std::function<void(size_t n)> EventsExecutor::WrapCallback(py::handle entity, std::function<void(size_t n)> callback)
+{
+    auto key = rcl_callback_manager_.GetKey<const void *>(entity);
+    return [this, callback, key](size_t number_of_events) {
+        events_queue_.Enqueue([this, callback, key, number_of_events]() {
+          if (!rcl_callback_manager_.HasCallback(key)) {
+            // This callback has been removed, just drop it as the objects it may want to touch may
+            // no longer exist.
+            return;
+          }
+          callback(number_of_events);
+      });
+    };
+}
+
+void EventsExecutor::UpdateEntitiesFromNodes(bool shutdown)
 {
   // Clear pending flag as early as possible, so we error on the side of retriggering a few
   // harmless updates rather than potentially missing important additions.
@@ -208,45 +222,47 @@ void EventsExecutor::UpdateEntitiesFromNodes()
   py::set clients;
   py::set services;
   py::set waitables;
-  for (py::handle node : nodes_) {
-    subscriptions.attr("update")(py::set(node.attr("subscriptions")));
-    timers.attr("update")(py::set(node.attr("timers")));
-    clients.attr("update")(py::set(node.attr("clients")));
-    services.attr("update")(py::set(node.attr("services")));
-    waitables.attr("update")(py::set(node.attr("waitables")));
+  if (!shutdown) {
+    for (py::handle node : nodes_) {
+      subscriptions.attr("update")(py::set(node.attr("subscriptions")));
+      timers.attr("update")(py::set(node.attr("timers")));
+      clients.attr("update")(py::set(node.attr("clients")));
+      services.attr("update")(py::set(node.attr("services")));
+      waitables.attr("update")(py::set(node.attr("waitables")));
 
-    // It doesn't seem to be possible to support guard conditions with a callback-based (as
-    // opposed to waitset-based) API.  Fortunately we don't seem to need to.
-    if (!py::set(node.attr("guards")).empty()) {
-      throw std::runtime_error("Guard conditions not supported");
+      // It doesn't seem to be possible to support guard conditions with a callback-based (as
+      // opposed to waitset-based) API.  Fortunately we don't seem to need to.
+      if (!py::set(node.attr("guards")).empty()) {
+        throw std::runtime_error("Guard conditions not supported");
+      }
     }
+  } else {
+    // Remove all tracked entities and nodes.
+    nodes_.clear();
   }
 
   // Perform updates for added and removed entities
   UpdateEntitySet(
     subscriptions_, subscriptions,
-    [this](py::handle h) { HandleAddedSubscription(h); },
-    [this](py::handle h) { HandleRemovedSubscription(h); });
-
+    std::bind(&EventsExecutor::HandleAddedSubscription, this, pl::_1),
+    std::bind(&EventsExecutor::HandleRemovedSubscription, this, pl::_1));
   UpdateEntitySet(
-    timers_, timers,
-    [this](py::handle h) { HandleAddedTimer(h); },
-    [this](py::handle h) { HandleRemovedTimer(h); });
-
+    timers_, timers, std::bind(&EventsExecutor::HandleAddedTimer, this, pl::_1),
+    std::bind(&EventsExecutor::HandleRemovedTimer, this, pl::_1));
   UpdateEntitySet(
-    clients_, clients,
-    [this](py::handle h) { HandleAddedClient(h); },
-    [this](py::handle h) { HandleRemovedClient(h); });
-
+    clients_, clients, std::bind(&EventsExecutor::HandleAddedClient, this, pl::_1),
+    std::bind(&EventsExecutor::HandleRemovedClient, this, pl::_1));
   UpdateEntitySet(
-    services_, services,
-    [this](py::handle h) { HandleAddedService(h); },
-    [this](py::handle h) { HandleRemovedService(h); });
-
+    services_, services, std::bind(&EventsExecutor::HandleAddedService, this, pl::_1),
+    std::bind(&EventsExecutor::HandleRemovedService, this, pl::_1));
   UpdateEntitySet(
-    waitables_, waitables,
-    [this](py::handle h) { HandleAddedWaitable(h); },
-    [this](py::handle h) { HandleRemovedWaitable(h); });
+    waitables_, waitables, std::bind(&EventsExecutor::HandleAddedWaitable, this, pl::_1),
+    std::bind(&EventsExecutor::HandleRemovedWaitable, this, pl::_1));
+
+  if (shutdown) {
+    // Stop spinning after everything is torn down.
+    events_queue_.Stop();
+  }
 }
 
 void EventsExecutor::UpdateEntitySet(
@@ -267,45 +283,6 @@ void EventsExecutor::UpdateEntitySet(
   entity_set = new_entity_set;
 }
 
-std::function<void(size_t n)> EventsExecutor::EnqueueCallback(py::handle entity, std::function<void(size_t n)> callback)
-{
-    auto key = rcl_callback_manager_.GetKey<const void *>(entity);
-    return [this, callback, key](size_t number_of_events) {
-        events_queue_.Enqueue([this, callback, key, number_of_events]() {
-          if (!rcl_callback_manager_.HasCallback(key)) {
-            // This callback has been removed, just drop it as the objects it may want to touch may
-            // no longer exist.
-            return;
-          }
-          callback(number_of_events);
-      });
-    };
-}
-
-void EventsExecutor::HandleAddedClient(py::handle client)
-{
-  RegisterEventCallback<
-    rcl_client_set_on_new_response_callback,
-    rcl_client_t,
-    Client>(
-      client,
-      EnqueueCallback(client,
-      [this, client](size_t number_of_events) {
-        HandleClientReady(client, number_of_events);
-      })
-  );
-}
-
-void EventsExecutor::HandleRemovedClient(py::handle client)
-{
-  ClearEventCallback<
-    rcl_client_set_on_new_response_callback,
-    rcl_client_t,
-    Client>(
-      client
-  );
-}
-
 void EventsExecutor::HandleAddedSubscription(py::handle subscription)
 {
   RegisterEventCallback<
@@ -313,7 +290,7 @@ void EventsExecutor::HandleAddedSubscription(py::handle subscription)
     rcl_subscription_t,
     Subscription>(
       subscription,
-      EnqueueCallback(subscription,
+      WrapCallback(subscription,
       [this, subscription](size_t number_of_events) {
         HandleSubscriptionReady(subscription, number_of_events);
       })
@@ -329,31 +306,6 @@ void EventsExecutor::HandleRemovedSubscription(py::handle subscription)
       subscription
   );
 }
-
-void EventsExecutor::HandleAddedService(py::handle service)
-{
-  RegisterEventCallback<
-    rcl_service_set_on_new_request_callback,
-    rcl_service_t,
-    Service>(
-      service,
-      EnqueueCallback(service,
-      [this, service](size_t number_of_events) {
-        HandleServiceReady(service, number_of_events);
-      })
-  );
-}
-
-void EventsExecutor::HandleRemovedService(py::handle service)
-{
-  ClearEventCallback<
-    rcl_service_set_on_new_request_callback,
-    rcl_service_t,
-    Service>(
-      service
-  );
-}
-
 
 void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t number_of_events)
 {
@@ -373,7 +325,7 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   const int callback_type = py::cast<int>(subscription.attr("_callback_type").attr("value"));
   const int message_only =
     py::cast<int>(subscription.attr("CallbackType").attr("MessageOnly").attr("value"));
-  const py::object callback = subscription.attr("callback");
+  const py::handle callback = subscription.attr("callback");
 
   // rmw_cyclonedds has a bug which causes number_of_events to be zero in the case where messages
   // were waiting for us when we registered the callback, and the topic is using KEEP_ALL history
@@ -383,15 +335,21 @@ void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t num
   for (size_t i = 0; number_of_events ? i < number_of_events : !got_none; ++i) {
     py::object msg_info = _rclpy_sub.take_message(msg_type, raw);
     if (!msg_info.is_none()) {
-      if (callback_type == message_only) {
-        create_task(callback, py::cast<py::tuple>(msg_info)[0]);
-      } else {
-        create_task(callback, msg_info);
+      try {
+        if (callback_type == message_only) {
+          callback(py::cast<py::tuple>(msg_info)[0]);
+        } else {
+          callback(msg_info);
+        }
+      } catch (const py::error_already_set & e) {
+        HandleCallbackExceptionInNodeEntity(e, subscription, "subscriptions");
+        throw;
       }
     } else {
       got_none = true;
     }
   }
+
   PostOutstandingTasks();
 }
 
@@ -437,6 +395,30 @@ void EventsExecutor::HandleTimerReady(py::handle timer, const rcl_timer_call_inf
   PostOutstandingTasks();
 }
 
+void EventsExecutor::HandleAddedClient(py::handle client)
+{
+  RegisterEventCallback<
+    rcl_client_set_on_new_response_callback,
+    rcl_client_t,
+    Client>(
+      client,
+      WrapCallback(client,
+      [this, client](size_t number_of_events) {
+        HandleClientReady(client, number_of_events);
+      })
+  );
+}
+
+void EventsExecutor::HandleRemovedClient(py::handle client)
+{
+  ClearEventCallback<
+    rcl_client_set_on_new_response_callback,
+    rcl_client_t,
+    Client>(
+      client
+  );
+}
+
 void EventsExecutor::HandleClientReady(py::handle client, size_t number_of_events)
 {
   if (stop_after_user_callback_) {
@@ -478,6 +460,30 @@ void EventsExecutor::HandleClientReady(py::handle client, size_t number_of_event
   }
 
   PostOutstandingTasks();
+}
+
+void EventsExecutor::HandleAddedService(py::handle service)
+{
+  RegisterEventCallback<
+    rcl_service_set_on_new_request_callback,
+    rcl_service_t,
+    Service>(
+      service,
+      WrapCallback(service,
+      [this, service](size_t number_of_events) {
+        HandleServiceReady(service, number_of_events);
+      })
+  );
+}
+
+void EventsExecutor::HandleRemovedService(py::handle service)
+{
+  ClearEventCallback<
+    rcl_service_set_on_new_request_callback,
+    rcl_service_t,
+    Service>(
+      service
+  );
 }
 
 void EventsExecutor::HandleServiceReady(py::handle service, size_t number_of_events)

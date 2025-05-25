@@ -1,4 +1,3 @@
-from math import inf
 from types import TracebackType
 from typing import Any, Callable, Coroutine, Optional, Type, Set
 from rclpy.executors import ExecutorBase
@@ -139,10 +138,10 @@ class AsyncioExecutor(ExecutorBase):
         self._loop.stop()
         self._detach_from_loop()
 
-    def wake(self):
+    def wake(self) -> None:
         self._update_entities_from_nodes()
 
-    def add_node(self, node: Node):
+    def add_node(self, node: Node) -> bool:
         if node in self._nodes:
             return False
         
@@ -151,7 +150,7 @@ class AsyncioExecutor(ExecutorBase):
         self._update_entities_from_nodes()
         return True
 
-    def remove_node(self, node: Node):
+    def remove_node(self, node: Node) -> None:
         if node not in self._nodes:
             return
         
@@ -163,7 +162,7 @@ class AsyncioExecutor(ExecutorBase):
         _chain_future(rclpy_future, asyncio_future)
         return asyncio_future
     
-    def _update_entities_from_nodes(self):
+    def _update_entities_from_nodes(self) -> None:
         subscriptions, timers, clients, services, waitables = set(), set(), set(), set(), set()
         for node in self._nodes:
             subscriptions.update(node.subscriptions)

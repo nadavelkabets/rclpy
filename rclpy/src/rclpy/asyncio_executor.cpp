@@ -35,7 +35,9 @@ void AsyncioExecutor::remove_subscription(py::object subscription)
 
 void define_asyncio_executor(py::object m)
 {
-  py::class_<AsyncioExecutor>(m, "AsyncioExecutor");
+  py::class_<AsyncioExecutor>(m, "AsyncioExecutor")
+  .def("add_subscription", &AsyncioExecutor::add_subscription)
+  .def("remove_subscription", &AsyncioExecutor::remove_subscription);
 }
 
 }  // namespace asyncio_executor

@@ -107,18 +107,6 @@ protected:
 class EventsExecutor : public EventsExecutorBase
 {
 public:
-  void wake();
-  bool add_node(pybind11::object node);
-  void remove_node(pybind11::handle node);
-  pybind11::list get_nodes() const;
-  // Collection of awaitable entities we're servicing
-  pybind11::set subscriptions_;
-  pybind11::set timers_;
-  pybind11::set clients_;
-  pybind11::set services_;
-  pybind11::set waitables_;
-  pybind11::set nodes_;                ///< The set of all nodes we're executing
-  
   /// @param context the rclpy Context object to operate on
   explicit EventsExecutor(pybind11::object context);
   ~EventsExecutor();
@@ -128,6 +116,10 @@ public:
   pybind11::object create_task(
     pybind11::object callback, pybind11::args args = {}, const pybind11::kwargs & kwargs = {});
   bool shutdown(std::optional<double> timeout_sec = {});
+  bool add_node(pybind11::object node);
+  void remove_node(pybind11::handle node);
+  void wake();
+  pybind11::list get_nodes() const;
   void spin(std::optional<double> timeout_sec = {}, bool stop_after_user_callback = false);
   void spin_until_future_complete(
     pybind11::handle future, std::optional<double> timeout_sec = {},
@@ -136,23 +128,6 @@ public:
   void exit(pybind11::object, pybind11::object, pybind11::object);
 
 private:
-  std::function<void(size_t n)> EnqueueCallback(py::handle entity, std::function<void(size_t n)> callback);
-  void HandleAddedSubscription(pybind11::handle);
-  void HandleRemovedSubscription(pybind11::handle);
-  /// Given an existing set of entities and a set with the desired new state, updates the existing
-  /// set and invokes callbacks on each added or removed entity.
-  void UpdateEntitySet(
-    pybind11::set & entity_set, const pybind11::set & new_entity_set,
-    std::function<void(pybind11::handle)> added_entity_callback,
-    std::function<void(pybind11::handle)> removed_entity_callback);
-  EventsQueue events_queue_;
-  std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
-
-  /// Updates the sets of known entities based on the currently tracked nodes.  This is not thread
-  /// safe, so it must be posted to the EventsQueue if the executor is currently spinning.  Expects
-  /// the GIL to be held before calling.  If @p shutdown is true, a purge of all known nodes and
-  /// entities is forced.
-  void UpdateEntitiesFromNodes();
   // Structure to hold entities discovered underlying a Waitable object.
   struct WaitableSubEntities
   {
@@ -162,8 +137,23 @@ private:
     std::vector<const rcl_service_t *> services;
     std::vector<const rcl_event_t *> events;
   };
+  /// Updates the sets of known entities based on the currently tracked nodes.  This is not thread
+  /// safe, so it must be posted to the EventsQueue if the executor is currently spinning.  Expects
+  /// the GIL to be held before calling.  If @p shutdown is true, a purge of all known nodes and
+  /// entities is forced.
+  void UpdateEntitiesFromNodes(bool shutdown);
 
-  void OnWake();
+  /// Given an existing set of entities and a set with the desired new state, updates the existing
+  /// set and invokes callbacks on each added or removed entity.
+  void UpdateEntitySet(
+    pybind11::set & entity_set, const pybind11::set & new_entity_set,
+    std::function<void(pybind11::handle)> added_entity_callback,
+    std::function<void(pybind11::handle)> removed_entity_callback);
+
+  std::function<void(size_t n)> WrapCallback(py::handle entity, std::function<void(size_t n)> callback);
+
+  void HandleAddedSubscription(pybind11::handle);
+  void HandleRemovedSubscription(pybind11::handle);
   void HandleSubscriptionReady(pybind11::handle, size_t number_of_events);
 
   void HandleAddedTimer(pybind11::handle);
@@ -229,13 +219,23 @@ private:
   const pybind11::object rclpy_task_;
   const pybind11::object rclpy_timer_timer_info_;
 
+  EventsQueue events_queue_;
   ScopedSignalCallback signal_callback_;
-  
+
+  pybind11::set nodes_;                ///< The set of all nodes we're executing
+  std::atomic<bool> wake_pending_{};   ///< An unhandled call to wake() has been made
   std::timed_mutex spinning_mutex_;    ///< Held while a thread is spinning
 
   /// This flag is used by spin_once() to signal that the EventsQueue should be stopped after a
   /// single user-visible callback has been dispatched.
   bool stop_after_user_callback_{};
+
+  // Collection of awaitable entities we're servicing
+  pybind11::set subscriptions_;
+  pybind11::set timers_;
+  pybind11::set clients_;
+  pybind11::set services_;
+  pybind11::set waitables_;
 
   /// Collection of asynchronous Tasks awaiting new events to further iterate.
   std::vector<pybind11::handle> blocked_tasks_;
