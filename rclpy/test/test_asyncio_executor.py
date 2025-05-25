@@ -13,19 +13,20 @@
 # limitations under the License.
 
 import asyncio
-from rclpy.task import Future
+
 import pytest
 from rclpy.experimental.asyncio_executor import AsyncioExecutor
+from rclpy.task import Future
 
 
 @pytest.fixture
 def loop():
-    l = asyncio.new_event_loop()
-    asyncio.set_event_loop(l)
+    lp = asyncio.new_event_loop()
+    asyncio.set_event_loop(lp)
 
-    yield l
+    yield lp
 
-    l.close()
+    lp.close()
 
 
 def test_asyncio_does_not_crash_awaiting_rclpy_future(loop: asyncio.AbstractEventLoop) -> None:

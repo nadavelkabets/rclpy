@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import TracebackType
-from typing import Any, Callable, Coroutine, Optional, Type, Set
-from rclpy.executors import ExecutorBase
 import asyncio
-from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
-import time
 from contextlib import contextmanager
+from functools import partial
+import time
+from types import TracebackType
+from typing import Any, Callable, Coroutine, Optional, Set, Type
+
 import rclpy
-from rclpy.executors import await_or_execute
+from rclpy.client import Client
+from rclpy.executors import await_or_execute, ExecutorBase
+from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.node import Node
+from rclpy.service import Service
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
-from rclpy.client import Client
-from rclpy.service import Service
-from functools import partial
 
 
 @contextmanager
@@ -41,6 +41,7 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
 
 
 class AsyncioExecutor(ExecutorBase):
+
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
         self.__executor = _rclpy.AsyncioExecutor()
         self._tasks: Set[asyncio.Task] = set()
@@ -129,7 +130,7 @@ class AsyncioExecutor(ExecutorBase):
 
     def create_future(self):
         if not self._loop:
-            raise RuntimeError("No loop is attached to this executor")
+            raise RuntimeError('No loop is attached to this executor')
 
         return self._loop.create_future()
 
@@ -186,7 +187,7 @@ class AsyncioExecutor(ExecutorBase):
             services.update(node.services)
             waitables.update(node.waitables)
             if getattr(node, 'guards', None):
-                raise RuntimeError("Guard conditions not supported")
+                raise RuntimeError('Guard conditions not supported')
 
         # Sync each entity category
         self._update_entity_set(
@@ -199,8 +200,6 @@ class AsyncioExecutor(ExecutorBase):
     def _add_subscription(self, subscription: Subscription):
         self.__executor.add_subscription(
             subscription,
-            # embedding subscription in the callback function keeps reference to the subscription
-            # to avoid destruction of the subscription while a callback is awaiting execution in the loop
             partial(self._handle_ready_subscription, subscription),
         )
 

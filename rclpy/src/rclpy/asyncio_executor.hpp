@@ -21,7 +21,7 @@
 
 namespace rclpy
 {
-using namespace events_executor;
+using events_executor::EventsExecutorBase;
 namespace asyncio_executor
 {
 

@@ -13,8 +13,10 @@
 // limitations under the License.
 
 #include "asyncio_executor.hpp"
+#include <utility>
 #include "events_executor/rcl_support.hpp"
 #include "pybind11/functional.h"
+
 
 namespace py = pybind11;
 
@@ -23,8 +25,7 @@ namespace rclpy
 namespace asyncio_executor
 {
 
-// pybind takes care of converting the python function to a std::function for us and holding it's reference
-// the python function is a
+// pybind manages conversion to std::function for us
 void AsyncioExecutor::add_subscription(
   py::object subscription,
   std::function<void(size_t n)> callback)

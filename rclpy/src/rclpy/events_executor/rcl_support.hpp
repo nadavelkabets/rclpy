@@ -45,7 +45,7 @@ public:
   /// pointer is aliased and must live for the lifetime of this object.  These callbacks will be
   /// invoked without the Python Global Interpreter Lock held, so if they need to access Python at
   /// all make sure to acquire that explicitly.
-  explicit RclCallbackManager();
+  RclCallbackManager();
   ~RclCallbackManager();
 
   /// Creates a callback wrapper to be passed to RCL C functions.  @p key should be a pointer to

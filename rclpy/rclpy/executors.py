@@ -118,14 +118,26 @@ class _WorkTracker:
 
 
 @overload
-async def await_or_execute(callback: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any) -> T: ...
+async def await_or_execute(
+    callback: Callable[..., Coroutine[Any, Any, T]],
+    *args: Any,
+    **kwargs: Any
+) -> T: ...
 
 
 @overload
-async def await_or_execute(callback: Callable[..., T], *args: Any, **kwargs: Any) -> T: ...
+async def await_or_execute(
+    callback: Callable[..., T],
+    *args: Any,
+    **kwargs: Any
+) -> T: ...
 
 
-async def await_or_execute(callback: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+async def await_or_execute(
+    callback: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any
+) -> Any:
     """Await a callback if it is a coroutine, else execute it."""
     if inspect.iscoroutinefunction(callback):
         # Await a coroutine
@@ -173,7 +185,9 @@ class TimeoutObject:
     def timeout(self, timeout: float) -> None:
         self._timeout = timeout
 
+
 class AbstractExecutor:
+
     @property
     def context(self) -> Context: ...
     def add_node(self, node: 'Node') -> bool: ...
@@ -182,7 +196,9 @@ class AbstractExecutor:
     def wake(self) -> None: ...
     def get_nodes(self) -> List['Node']: ...
 
+
 class ExecutorBase(AbstractExecutor):
+
     def _take_timer(self, tmr: Timer) -> Optional[Callable[[], Coroutine[None, None, None]]]:
         try:
             with tmr.handle:
