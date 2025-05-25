@@ -10,6 +10,14 @@ extern "C" void RclPyCallbackTrampoline(const void * user_data, size_t number_of
 template <class RclEntityT>
 class Callbackable {
 public:
+    virtual ~Callbackable()
+    {   
+        if (callback_)
+        {
+            py::gil_scoped_acquire gil_acquire;
+            clear_callback();
+        }
+    }
     void set_callback(py::object callback)
     {
         if (callback_)
@@ -28,7 +36,7 @@ public:
 
     }
     virtual rcl_ret_t SetCallback(RclEntityT * entity, rcl_event_callback_t callback, const void * user_data) = 0;
-    virtual const RclEntityT * rcl_ptr() const = 0;
+    virtual RclEntityT * rcl_ptr() const = 0;
 private:
     std::shared_ptr<py::object> callback_;
 };
