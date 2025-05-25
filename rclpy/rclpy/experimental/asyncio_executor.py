@@ -28,6 +28,7 @@ from rclpy.client import Client
 from rclpy.service import Service
 from functools import partial
 
+
 @contextmanager
 def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractEventLoop):
     handle = None
@@ -37,6 +38,7 @@ def _timeout(timeout: int, callback: Callable[[], None], loop: asyncio.AbstractE
 
     if handle and handle.when() > time.time():
         handle.cancel()
+
 
 class AsyncioExecutor(ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
@@ -85,23 +87,22 @@ class AsyncioExecutor(ExecutorBase):
         self._tasks.add(task)
         return task
 
-    def create_task(self, callback: Callable[..., Any], *args: Any, **kwargs: Any
-                    ) -> asyncio.Task:
+    def create_task(self, callback: Callable[..., Any], *args: Any, **kwargs: Any) -> asyncio.Task:
         if not asyncio.iscoroutine(callback):
             callback = await_or_execute(callback, *args, **kwargs)
-        
+
         return asyncio.create_task(callback)
 
     def _exception_handler(self, fut):
         ex = fut.exception()
         if ex:
             raise ex
-        
+
         self._tasks.remove(fut)
 
     def spin(self):
         self._loop.run_forever()
-    
+
     def spin_once(self, timeout):
         with _timeout(timeout, self._stop_if_running, self._loop):
             self._loop.run_forever()
@@ -129,7 +130,7 @@ class AsyncioExecutor(ExecutorBase):
     def create_future(self):
         if not self._loop:
             raise RuntimeError("No loop is attached to this executor")
-        
+
         return self._loop.create_future()
 
     def _attach_to_loop(self):
@@ -140,10 +141,10 @@ class AsyncioExecutor(ExecutorBase):
     def attach_to_loop(self, loop: asyncio.AbstractEventLoop):
         if self._loop:
             self._detach_from_loop()
-        
+
         self._loop = loop
         self._attach_to_loop()
-        
+
     def _detach_from_loop(self):
         # self._loop.remove_reader(self._executor.fd)
         self._loop = None
@@ -158,7 +159,7 @@ class AsyncioExecutor(ExecutorBase):
     def add_node(self, node: Node) -> bool:
         if node in self._nodes:
             return False
-        
+
         self._nodes.add(node)
         node.executor = self
         self._update_entities_from_nodes()
@@ -167,7 +168,7 @@ class AsyncioExecutor(ExecutorBase):
     def remove_node(self, node: Node) -> None:
         if node not in self._nodes:
             return
-        
+
         self._nodes.remove(node)
         self._update_entities_from_nodes()
 
@@ -175,7 +176,7 @@ class AsyncioExecutor(ExecutorBase):
         asyncio_future = self._loop.create_future()
         _chain_future(rclpy_future, asyncio_future)
         return asyncio_future
-    
+
     def _update_entities_from_nodes(self) -> None:
         subscriptions, timers, clients, services, waitables = set(), set(), set(), set(), set()
         for node in self._nodes:
@@ -189,18 +190,18 @@ class AsyncioExecutor(ExecutorBase):
 
         # Sync each entity category
         self._update_entity_set(
-            self._subscriptions, 
+            self._subscriptions,
             subscriptions,
             self._add_subscription,
-            self.__executor.remove_subscription
+            self.__executor.remove_subscription,
         )
 
     def _add_subscription(self, subscription: Subscription):
         self.__executor.add_subscription(
             subscription,
             # embedding subscription in the callback function keeps reference to the subscription
-            # to avoid destruction of the subscription while a callback is awaiting execution in the loop 
-            partial(self._handle_ready_subscription, subscription)
+            # to avoid destruction of the subscription while a callback is awaiting execution in the loop
+            partial(self._handle_ready_subscription, subscription),
         )
 
     def _handle_ready_subscription(self, subscription: Subscription, _: int):
@@ -216,18 +217,19 @@ class AsyncioExecutor(ExecutorBase):
         current_set: set,
         new_set: set,
         added_cb: Callable[[Any], None],
-        removed_cb: Callable[[Any], None]
+        removed_cb: Callable[[Any], None],
     ) -> None:
         # Handle additions
         for h in new_set - current_set:
             current_set.add(h)
             added_cb(h)
-            
+
         # Handle removals
         for h in current_set - new_set:
             current_set.remove(h)
             removed_cb(h)
-        
+
+
 def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
     """Chain two futures so that when one completes, so does the other.
 
