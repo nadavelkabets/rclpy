@@ -61,8 +61,7 @@ protected:
     auto cb = rcl_callback_manager_.MakeCallback(rcl_ptr, std::move(ready_handler), with);
 
     // Only compute entity_name on error
-    if (RCL_RET_OK != RegisterCallback(rcl_ptr, RclEventCallbackTrampoline, std::move(cb)))
-    {
+    if (RCL_RET_OK != RegisterCallback(rcl_ptr, RclEventCallbackTrampoline, std::move(cb))) {
       std::string entity_name = entity
         .attr("__class__").attr("__name__")
         .attr("lower")().cast<std::string>();
@@ -150,7 +149,9 @@ private:
     std::function<void(pybind11::handle)> added_entity_callback,
     std::function<void(pybind11::handle)> removed_entity_callback);
 
-  std::function<void(size_t n)> WrapCallback(py::handle entity, std::function<void(size_t n)> callback);
+  std::function<void(size_t n)> WrapCallback(
+    py::handle entity,
+    std::function<void(size_t n)> callback);
 
   void HandleAddedSubscription(pybind11::handle);
   void HandleRemovedSubscription(pybind11::handle);

@@ -37,11 +37,12 @@ public:
     handle_.attr("__enter__")();
   }
 
-  ~ScopedWith() {
+  ~ScopedWith()
+  {
     py::gil_scoped_acquire gil_acquire;
     handle_.attr("__exit__")(py::none(), py::none(), py::none());
     handle_.dec_ref();
-    }
+  }
 
 private:
   py::handle handle_;

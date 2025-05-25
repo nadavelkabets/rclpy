@@ -195,19 +195,21 @@ void EventsExecutor::spin_until_future_complete(
 EventsExecutor * EventsExecutor::enter() {return this;}
 void EventsExecutor::exit(py::object, py::object, py::object) {shutdown();}
 
-std::function<void(size_t n)> EventsExecutor::WrapCallback(py::handle entity, std::function<void(size_t n)> callback)
+std::function<void(size_t n)> EventsExecutor::WrapCallback(
+  py::handle entity,
+  std::function<void(size_t n)> callback)
 {
-    auto key = rcl_callback_manager_.GetKey<const void *>(entity);
-    return [this, callback, key](size_t number_of_events) {
-        events_queue_.Enqueue([this, callback, key, number_of_events]() {
-          if (!rcl_callback_manager_.HasCallback(key)) {
+  auto key = rcl_callback_manager_.GetKey<const void *>(entity);
+  return [this, callback, key](size_t number_of_events) {
+           events_queue_.Enqueue([this, callback, key, number_of_events]() {
+               if (!rcl_callback_manager_.HasCallback(key)) {
             // This callback has been removed, just drop it as the objects it may want to touch may
             // no longer exist.
-            return;
-          }
-          callback(number_of_events);
+                 return;
+               }
+               callback(number_of_events);
       });
-    };
+         };
 }
 
 void EventsExecutor::UpdateEntitiesFromNodes(bool shutdown)
@@ -291,10 +293,10 @@ void EventsExecutor::HandleAddedSubscription(py::handle subscription)
     Subscription>(
       subscription,
       WrapCallback(subscription,
-      [this, subscription](size_t number_of_events) {
-        HandleSubscriptionReady(subscription, number_of_events);
+    [this, subscription](size_t number_of_events) {
+      HandleSubscriptionReady(subscription, number_of_events);
       })
-  );
+    );
 }
 
 void EventsExecutor::HandleRemovedSubscription(py::handle subscription)
@@ -304,7 +306,7 @@ void EventsExecutor::HandleRemovedSubscription(py::handle subscription)
     rcl_subscription_t,
     Subscription>(
       subscription
-  );
+    );
 }
 
 void EventsExecutor::HandleSubscriptionReady(py::handle subscription, size_t number_of_events)
@@ -403,10 +405,10 @@ void EventsExecutor::HandleAddedClient(py::handle client)
     Client>(
       client,
       WrapCallback(client,
-      [this, client](size_t number_of_events) {
-        HandleClientReady(client, number_of_events);
+    [this, client](size_t number_of_events) {
+      HandleClientReady(client, number_of_events);
       })
-  );
+    );
 }
 
 void EventsExecutor::HandleRemovedClient(py::handle client)
@@ -416,7 +418,7 @@ void EventsExecutor::HandleRemovedClient(py::handle client)
     rcl_client_t,
     Client>(
       client
-  );
+    );
 }
 
 void EventsExecutor::HandleClientReady(py::handle client, size_t number_of_events)
@@ -470,10 +472,10 @@ void EventsExecutor::HandleAddedService(py::handle service)
     Service>(
       service,
       WrapCallback(service,
-      [this, service](size_t number_of_events) {
-        HandleServiceReady(service, number_of_events);
+    [this, service](size_t number_of_events) {
+      HandleServiceReady(service, number_of_events);
       })
-  );
+    );
 }
 
 void EventsExecutor::HandleRemovedService(py::handle service)
@@ -483,7 +485,7 @@ void EventsExecutor::HandleRemovedService(py::handle service)
     rcl_service_t,
     Service>(
       service
-  );
+    );
 }
 
 void EventsExecutor::HandleServiceReady(py::handle service, size_t number_of_events)

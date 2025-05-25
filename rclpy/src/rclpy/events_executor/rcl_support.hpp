@@ -60,7 +60,7 @@ public:
 
   bool HasCallback(const void * key);
 
-  template <typename EntityT>
+  template<typename EntityT>
   EntityT GetKey(py::handle handle)
   {
     return py::cast<EntityT>(handle.attr("pointer"));

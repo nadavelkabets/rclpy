@@ -28,8 +28,10 @@ AsyncioExecutor::AsyncioExecutor()
 }
 
 // pybind takes care of converting the python function to a std::function for us and holding it's reference
-// the python function is a 
-void AsyncioExecutor::add_subscription(py::object subscription, std::function<void(size_t n)> callback)
+// the python function is a
+void AsyncioExecutor::add_subscription(
+  py::object subscription,
+  std::function<void(size_t n)> callback)
 {
   RegisterEventCallback<
     rcl_subscription_set_on_new_message_callback,
