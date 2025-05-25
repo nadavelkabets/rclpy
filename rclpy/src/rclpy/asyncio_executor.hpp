@@ -28,8 +28,6 @@ namespace asyncio_executor
 class AsyncioExecutor : public EventsExecutorBase
 {
 public:
-  explicit AsyncioExecutor();
-  ~AsyncioExecutor();
   void add_subscription(py::object subscription, std::function<void(size_t n)> callback);
   void remove_subscription(py::object subscription);
 };

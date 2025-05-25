@@ -23,10 +23,6 @@ namespace rclpy
 namespace asyncio_executor
 {
 
-AsyncioExecutor::AsyncioExecutor()
-{
-}
-
 // pybind takes care of converting the python function to a std::function for us and holding it's reference
 // the python function is a
 void AsyncioExecutor::add_subscription(
