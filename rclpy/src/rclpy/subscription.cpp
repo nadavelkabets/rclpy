@@ -190,7 +190,7 @@ Subscription::SetCallback(rcl_subscription_t * subscription, rcl_event_callback_
 void
 define_subscription(py::object module)
 {
-  py::class_<Subscription, Destroyable, std::shared_ptr<Subscription>>(module, "Subscription")
+  py::class_<Subscription, Destroyable, ObservableInterface, std::shared_ptr<Subscription>>(module, "Subscription")
   .def(py::init<Node &, py::object, std::string, py::object>())
   .def_property_readonly(
     "pointer", [](const Subscription & subscription) {

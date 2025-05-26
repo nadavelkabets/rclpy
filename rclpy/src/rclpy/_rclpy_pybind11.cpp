@@ -61,6 +61,7 @@ PYBIND11_MODULE(_rclpy_pybind11, m) {
   m.doc() = "ROS 2 Python client library.";
 
   rclpy::define_destroyable(m);
+  rclpy::define_abstract_observable(m);
 
   py::enum_<rcl_clock_type_t>(m, "ClockType")
   .value("UNINITIALIZED", RCL_CLOCK_UNINITIALIZED)

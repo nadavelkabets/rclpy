@@ -24,7 +24,7 @@
 
 #include "destroyable.hpp"
 #include "node.hpp"
-#include "callbackable.hpp"
+#include "observable.hpp"
 
 namespace py = pybind11;
 
@@ -38,7 +38,7 @@ namespace rclpy
  */
 class Subscription
 : public Destroyable, 
-  public Callbackable<rcl_subscription_t>, 
+  public Observable<rcl_subscription_t>, 
   public std::enable_shared_from_this<Subscription>
 {
 public:
