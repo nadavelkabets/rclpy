@@ -19,11 +19,13 @@ from typing import Optional
 from typing import Type
 from typing import TypeVar
 from typing import Union
+import traceback
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
+from rclpy.logging import get_logger
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
 
@@ -133,3 +135,24 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def get_logger_name(self) -> str:
+        with self.handle:
+            return self.__service.get_logger_name()
+
+    def set_on_new_request_callback(self, callback: Callable[[int], None]) -> None:
+        logger = get_logger(self.get_logger_name())
+
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                logger.error(f'Caught exception in on request callback for service: {self.service_name}')
+                logger.error(traceback.format_exc())
+    
+        with self.handle:
+            self.__service.set_on_new_message_callback(safe_callback)
+
+    def clear_on_new_request_callback(self) -> None:
+        with self.handle:
+            self.__service.clear_on_new_message_callback()

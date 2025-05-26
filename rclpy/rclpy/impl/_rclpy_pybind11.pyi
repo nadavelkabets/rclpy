@@ -260,6 +260,9 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
     def qos(self) -> _rmw_qos_profile_dict:
         """Get the qos profile of the service."""
 
+    def get_logger_name(self) -> str:
+        """Get the name of the logger associated with the node of the subscription."""
+
     def service_send_response(self, pyresponse: SrvResponseT, header: rmw_request_id_t) -> None:
         """Send a response."""
 
@@ -275,6 +278,12 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         introspection_state: service_introspection.ServiceIntrospectionState
     ) -> None:
         """Configure whether introspection is enabled."""
+
+    def set_on_new_request_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_request_callback(self) -> None:
+        ...
 
 
 class TypeDescriptionService(Destroyable):
