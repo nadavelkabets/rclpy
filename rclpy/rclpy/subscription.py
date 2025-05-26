@@ -13,17 +13,33 @@
 # limitations under the License.
 
 
-from enum import Enum
 import inspect
+import traceback
+from enum import Enum
+from functools import partial
 from types import TracebackType
 from typing import Callable, Generic, Optional, Type, TypedDict, TypeVar, Union
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.event_handler import SubscriptionEventCallbacks
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
+from rclpy.impl.rcutils_logger import RcutilsLogger
+from rclpy.logging import get_logger
 from rclpy.qos import QoSProfile
 from rclpy.type_support import MsgT
 
+
+def wrapped_callback(
+    callback: Callable[[int], None],
+    logger: RcutilsLogger,
+    entity_name: str,
+    number_of_events: int
+):
+    try:
+        callback(number_of_events)
+    except Exception:
+        logger.error(f'Caught exception in callback for {entity_name}:')
+        logger.error(traceback.format_exc())
 
 class MessageInfo(TypedDict):
     source_timestamp: int
@@ -34,7 +50,6 @@ class MessageInfo(TypedDict):
 
 # Left to support Legacy TypeVars.
 MsgType = TypeVar('MsgType')
-
 
 class Subscription(Generic[MsgT]):
 
@@ -93,6 +108,10 @@ class Subscription(Generic[MsgT]):
     def handle(self) -> '_rclpy.Subscription[MsgT]':
         return self.__subscription
 
+    def get_logger_name(self) -> str:
+        with self.handle:
+            return self.__subscription.get_logger_name()
+
     def destroy(self) -> None:
         """
         Destroy a container for a ROS subscription.
@@ -143,3 +162,14 @@ class Subscription(Generic[MsgT]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def set_on_new_message_callback(self, callback: Callable[[int], None]):
+        with self.handle:
+            self.handle.set_on_new_message_callback(
+                partial(
+                    wrapped_callback,
+                    callback,
+                    get_logger(self.get_logger_name()),
+                    f"subscription for topic {self.topic_name()}"
+                )
+            )
