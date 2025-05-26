@@ -204,17 +204,8 @@ Service::set_callback(
 void
 Service::set_on_new_request_callback(std::function<void(size_t)> callback)
 {
-  // Set it temporarily to the new callback, while we replace the old one.
-  // This two-step setting, prevents a gap where the old std::function has
-  // been replaced but the middleware hasn't been told about the new one yet.
-  set_callback(
-    RclEventCallbackTrampoline,
-    static_cast<const void *>(&callback));
-
-  // Store the std::function to keep it in scope, also overwrites the existing one.
-  on_new_request_callback_ = callback;
-
-  // Set it again, now using the permanent storage.
+  clear_on_new_request_callback();
+  on_new_request_callback_ = std::move(callback);
   set_callback(
     RclEventCallbackTrampoline,
     static_cast<const void *>(&on_new_request_callback_));
