@@ -184,7 +184,7 @@ Subscription::get_publisher_count() const
 }
 
 void
-Subscription::set_on_new_message_callback(
+Subscription::set_callback(
   rcl_event_callback_t callback,
   const void * user_data)
 {
@@ -204,7 +204,7 @@ Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
   // Set it temporarily to the new callback, while we replace the old one.
   // This two-step setting, prevents a gap where the old std::function has
   // been replaced but the middleware hasn't been told about the new one yet.
-  set_on_new_message_callback(
+  set_callback(
     RclEventCallbackTrampoline,
     static_cast<const void *>(&callback));
 
@@ -212,7 +212,7 @@ Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
   on_new_message_callback_ = callback;
 
   // Set it again, now using the permanent storage.
-  set_on_new_message_callback(
+  set_callback(
     RclEventCallbackTrampoline,
     static_cast<const void *>(&on_new_message_callback_));
 }
@@ -221,8 +221,9 @@ void
 Subscription::clear_on_new_message_callback()
 {
     if (on_new_message_callback_) {
-      set_on_new_message_callback(nullptr, nullptr);
+      set_callback(nullptr, nullptr);
       on_new_message_callback_ = nullptr;
+  }
 }
 
 void
