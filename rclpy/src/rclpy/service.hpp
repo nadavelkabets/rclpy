@@ -28,13 +28,17 @@
 #include "destroyable.hpp"
 #include "node.hpp"
 #include "utils.hpp"
+#include "observable.hpp"
 
 namespace py = pybind11;
 
 namespace rclpy
 {
 
-class Service : public Destroyable, public std::enable_shared_from_this<Service>
+class Service
+: public Destroyable,
+  public Observable<rcl_service_t>,
+  public std::enable_shared_from_this<Service>
 {
 public:
   /// Create a service server
@@ -86,7 +90,7 @@ public:
 
   /// Get rcl_service_t pointer
   rcl_service_t *
-  rcl_ptr() const
+  rcl_ptr() const override
   {
     return rcl_service_.get();
   }
@@ -120,6 +124,7 @@ private:
   Node node_;
   std::shared_ptr<rcl_service_t> rcl_service_;
   rosidl_service_type_support_t * srv_type_;
+  rcl_ret_t SetCallback(rcl_service_t * service, rcl_event_callback_t callback, const void * user_data) override;
 };
 
 /// Define a pybind11 wrapper for an rclpy::Service

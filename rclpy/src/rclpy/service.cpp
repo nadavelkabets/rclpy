@@ -173,10 +173,16 @@ Service::configure_introspection(
   }
 }
 
+rcl_ret_t
+Service::SetCallback(rcl_service_t * service, rcl_event_callback_t callback, const void * user_data)
+{
+  return rcl_service_set_on_new_request_callback(service, callback, user_data);
+}
+
 void
 define_service(py::object module)
 {
-  py::class_<Service, Destroyable, std::shared_ptr<Service>>(module, "Service")
+  py::class_<Service, Destroyable, ObservableInterface, std::shared_ptr<Service>>(module, "Service")
   .def(py::init<Node &, py::object, const std::string &, py::object>())
   .def_property_readonly(
     "pointer", [](const Service & service) {

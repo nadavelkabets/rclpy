@@ -164,6 +164,12 @@ Client::configure_introspection(
   }
 }
 
+rcl_ret_t
+Client::SetCallback(rcl_client_t * client, rcl_event_callback_t callback, const void * user_data)
+{
+  return rcl_client_set_on_new_response_callback(client, callback, user_data);
+}
+
 const char *
 Client::get_service_name()
 {
@@ -173,7 +179,7 @@ Client::get_service_name()
 void
 define_client(py::object module)
 {
-  py::class_<Client, Destroyable, std::shared_ptr<Client>>(module, "Client")
+  py::class_<Client, Destroyable, ObservableInterface, std::shared_ptr<Client>>(module, "Client")
   .def(py::init<Node &, py::object, const std::string &, py::object>())
   .def_property_readonly(
     "service_name", &Client::get_service_name,

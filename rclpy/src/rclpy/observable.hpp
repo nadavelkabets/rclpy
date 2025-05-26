@@ -1,3 +1,6 @@
+#ifndef RCLPY__OBSERVABLE_HPP_
+#define RCLPY__OBSERVABLE_HPP_
+
 #include "pybind11/pybind11.h"
 #include "rcl/rcl.h"
 
@@ -6,7 +9,6 @@ namespace py = pybind11;
 namespace rclpy {
 
 extern "C" void RclPyCallbackTrampoline(const void * user_data, size_t number_of_events);
-void define_abstract_observable(py::object module);
 
 struct CallbackContainer {
     std::optional<py::object> cb;
@@ -17,6 +19,8 @@ class ObservableInterface {
         virtual void set_callback(py::object) = 0;
         virtual void clear_callback() = 0;
 };
+
+void define_abstract_observable(py::object module);
 
 template <class RclEntityT>
 class Observable : public ObservableInterface {
@@ -52,3 +56,5 @@ private:
     std::shared_ptr<CallbackContainer> callback_container_;
 };
 } // namespace rclpy
+
+#endif // RCLPY__OBSERVABLE_HPP_
