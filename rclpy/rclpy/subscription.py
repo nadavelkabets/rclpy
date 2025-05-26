@@ -159,9 +159,9 @@ class Subscription(Generic[MsgT]):
                 logger.error(f'Caught exception in on message callback for subscription: {self.topic_name}')
                 logger.error(traceback.format_exc())
     
-        with self.__subscription:
+        with self.handle:
             self.__subscription.set_on_new_message_callback(safe_callback)
 
     def clear_on_new_message_callback(self) -> None:
-        with self.__subscription:
+        with self.handle:
             self.__subscription.clear_on_new_message_callback()

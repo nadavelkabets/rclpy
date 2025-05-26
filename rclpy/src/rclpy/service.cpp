@@ -28,9 +28,10 @@
 #include "node.hpp"
 #include "service.hpp"
 #include "utils.hpp"
+#include "events_executor/rcl_support.hpp"
 
-namespace rclpy
-{
+namespace rclpy {
+using events_executor::RclEventCallbackTrampoline;
 
 void
 Service::destroy()
@@ -143,6 +144,18 @@ Service::service_take_request(py::object pyrequest_type)
 }
 
 const char *
+Service::get_logger_name() const
+{
+  const char * node_logger_name = rcl_node_get_logger_name(node_.rcl_ptr());
+  if (!node_logger_name) {
+    throw RCLError("Node logger name not set");
+  }
+
+  return node_logger_name;
+}
+
+
+const char *
 Service::get_service_name()
 {
   return rcl_service_get_service_name(rcl_service_.get());
@@ -174,6 +187,49 @@ Service::configure_introspection(
 }
 
 void
+Service::set_callback(
+  rcl_event_callback_t callback,
+  const void * user_data)
+{
+  rcl_ret_t ret = rcl_service_set_on_new_request_callback(
+    rcl_service_.get(),
+    callback,
+    user_data);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new message callback for subscription");
+  }
+}
+
+void
+Service::set_on_new_request_callback(std::function<void(size_t)> callback)
+{
+  // Set it temporarily to the new callback, while we replace the old one.
+  // This two-step setting, prevents a gap where the old std::function has
+  // been replaced but the middleware hasn't been told about the new one yet.
+  set_callback(
+    RclEventCallbackTrampoline,
+    static_cast<const void *>(&callback));
+
+  // Store the std::function to keep it in scope, also overwrites the existing one.
+  on_new_request_callback_ = callback;
+
+  // Set it again, now using the permanent storage.
+  set_callback(
+    RclEventCallbackTrampoline,
+    static_cast<const void *>(&on_new_request_callback_));
+}
+
+void
+Service::clear_on_new_request_callback()
+{
+    if (on_new_request_callback_) {
+      set_callback(nullptr, nullptr);
+      on_new_request_callback_ = nullptr;
+  }
+}
+
+void
 define_service(py::object module)
 {
   py::class_<Service, Destroyable, std::shared_ptr<Service>>(module, "Service")
@@ -197,6 +253,8 @@ define_service(py::object module)
     "Take a request from a given service")
   .def(
     "configure_introspection", &Service::configure_introspection,
-    "Configure whether introspection is enabled");
+    "Configure whether introspection is enabled")
+  .def("set_on_new_request_callback", &Service::set_on_new_request_callback)
+  .def("clear_on_new_request_callback", &Service::clear_on_new_request_callback);
 }
 }  // namespace rclpy
