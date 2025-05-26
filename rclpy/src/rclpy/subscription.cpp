@@ -30,11 +30,13 @@
 #include "serialization.hpp"
 #include "subscription.hpp"
 #include "utils.hpp"
+#include "events_executor/rcl_support.hpp"
 
 using pybind11::literals::operator""_a;
 
-namespace rclpy
-{
+namespace rclpy {
+using events_executor::RclEventCallbackTrampoline;
+
 Subscription::Subscription(
   Node & node, py::object pymsg_type, std::string topic,
   py::object pyqos_profile)
@@ -182,6 +184,48 @@ Subscription::get_publisher_count() const
 }
 
 void
+Subscription::set_on_new_message_callback(
+  rcl_event_callback_t callback,
+  const void * user_data)
+{
+  rcl_ret_t ret = rcl_subscription_set_on_new_message_callback(
+    rcl_subscription_.get(),
+    callback,
+    user_data);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new message callback for subscription");
+  }
+}
+
+void
+Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
+{
+  // Set it temporarily to the new callback, while we replace the old one.
+  // This two-step setting, prevents a gap where the old std::function has
+  // been replaced but the middleware hasn't been told about the new one yet.
+  set_on_new_message_callback(
+    RclEventCallbackTrampoline,
+    static_cast<const void *>(&callback));
+
+  // Store the std::function to keep it in scope, also overwrites the existing one.
+  on_new_message_callback_ = callback;
+
+  // Set it again, now using the permanent storage.
+  set_on_new_message_callback(
+    RclEventCallbackTrampoline,
+    static_cast<const void *>(&on_new_message_callback_));
+}
+
+void
+Subscription::clear_on_new_message_callback()
+{
+    if (on_new_message_callback_) {
+      set_on_new_message_callback(nullptr, nullptr);
+      on_new_message_callback_ = nullptr;
+}
+
+void
 define_subscription(py::object module)
 {
   py::class_<Subscription, Destroyable, std::shared_ptr<Subscription>>(module, "Subscription")
@@ -202,6 +246,8 @@ define_subscription(py::object module)
     "Return the resolved topic name of a subscription.")
   .def(
     "get_publisher_count", &Subscription::get_publisher_count,
-    "Count the publishers from a subscription.");
+    "Count the publishers from a subscription.")
+  .def("set_on_new_message_callback", &Subscription::set_on_new_message_callback)
+  .def("clear_on_new_message_callback", &Subscription::clear_on_new_message_callback);
 }
 }  // namespace rclpy
