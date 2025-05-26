@@ -117,7 +117,7 @@ private:
   std::shared_ptr<rcl_subscription_t> rcl_subscription_;
 
   void
-  set_on_new_message_callback(rcl_event_callback_t callback, const void * user_data);
+  set_callback(rcl_event_callback_t callback, const void * user_data);
 };
 /// Define a pybind11 wrapper for an rclpy::Subscription
 void define_subscription(py::object module);

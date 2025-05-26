@@ -590,6 +590,12 @@ class Subscription(Destroyable, Generic[MsgT]):
     def get_publisher_count(self) -> int:
         """Count the publishers from a subscription."""
 
+    def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_message_callback(self) -> None:
+        ...
+
 
 class rcl_time_point_t:
 

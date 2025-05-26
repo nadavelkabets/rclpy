@@ -163,13 +163,17 @@ class Subscription(Generic[MsgT]):
     ) -> None:
         self.destroy()
 
-    def set_on_new_message_callback(self, callback: Callable[[int], None]):
+    def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
         with self.handle:
             self.handle.set_on_new_message_callback(
                 partial(
                     wrapped_callback,
                     callback,
                     get_logger(self.get_logger_name()),
-                    f"subscription for topic {self.topic_name()}"
+                    f"subscription for topic {self.topic_name}"
                 )
             )
+
+    def clear_on_new_message_callback(self) -> None:
+        with self.handle:
+            self.handle.clear_on_new_message_callback()
