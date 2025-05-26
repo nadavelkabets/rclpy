@@ -16,30 +16,16 @@
 import inspect
 import traceback
 from enum import Enum
-from functools import partial
 from types import TracebackType
 from typing import Callable, Generic, Optional, Type, TypedDict, TypeVar, Union
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.event_handler import SubscriptionEventCallbacks
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
-from rclpy.impl.rcutils_logger import RcutilsLogger
 from rclpy.logging import get_logger
 from rclpy.qos import QoSProfile
 from rclpy.type_support import MsgT
 
-
-def wrapped_callback(
-    callback: Callable[[int], None],
-    logger: RcutilsLogger,
-    entity_name: str,
-    number_of_events: int
-):
-    try:
-        callback(number_of_events)
-    except Exception:
-        logger.error(f'Caught exception in callback for {entity_name}:')
-        logger.error(traceback.format_exc())
 
 class MessageInfo(TypedDict):
     source_timestamp: int
@@ -164,16 +150,18 @@ class Subscription(Generic[MsgT]):
         self.destroy()
 
     def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
-        with self.handle:
-            self.handle.set_on_new_message_callback(
-                partial(
-                    wrapped_callback,
-                    callback,
-                    get_logger(self.get_logger_name()),
-                    f"subscription for topic {self.topic_name}"
-                )
-            )
+        logger = get_logger(self.get_logger_name())
+
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                logger.error(f'Caught exception in on message callback for subscription: {self.topic_name}')
+                logger.error(traceback.format_exc())
+    
+        with self.__subscription:
+            self.__subscription.set_on_new_message_callback(safe_callback)
 
     def clear_on_new_message_callback(self) -> None:
-        with self.handle:
-            self.handle.clear_on_new_message_callback()
+        with self.__subscription:
+            self.__subscription.clear_on_new_message_callback()
