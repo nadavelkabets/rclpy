@@ -105,9 +105,6 @@ class AsyncioExecutor(ExecutorBase):
         task.add_done_callback(self._exception_handler)
         self._tasks.add(task)
 
-        if self._should_stop_after_callback and not self._stop_handle:
-            self._stop_handle = self._loop.call_soon(self._loop.stop)
-
 
     def _exception_handler(self, fut) -> None:
         ex = fut.exception()
@@ -274,3 +271,6 @@ class AsyncioExecutor(ExecutorBase):
                 break
 
             self._execute_entity(coro())
+
+        if self._should_stop_after_callback and not self._stop_handle:
+            self._stop_handle = self._loop.call_soon(self._loop.stop)
