@@ -180,6 +180,9 @@ class Client(Destroyable, Generic[SrvRequestT, SrvResponseT]):
     ) -> tuple[rmw_service_info_t, SrvResponseT] | tuple[None, None]:
         """Take a received response from an earlier request."""
 
+    def get_logger_name(self) -> str:
+        """Get the name of the logger associated with the node of the client."""
+
     def configure_introspection(
         self,
         clock: Clock,
@@ -187,6 +190,12 @@ class Client(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         introspection_state: service_introspection.ServiceIntrospectionState
     ) -> None:
         """Configure whether introspection is enabled."""
+
+    def set_on_new_response_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_response_callback(self) -> None:
+        ...
 
 
 class Context(Destroyable):
@@ -261,7 +270,7 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         """Get the qos profile of the service."""
 
     def get_logger_name(self) -> str:
-        """Get the name of the logger associated with the node of the subscription."""
+        """Get the name of the logger associated with the node of the service."""
 
     def service_send_response(self, pyresponse: SrvResponseT, header: rmw_request_id_t) -> None:
         """Send a response."""

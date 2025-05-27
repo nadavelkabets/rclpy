@@ -20,6 +20,8 @@ from typing import Generic
 from typing import Optional
 from typing import Type
 from typing import TypeVar
+from typing import Callable
+import traceback
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
@@ -29,6 +31,7 @@ from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.task import Future
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
+from rclpy.logging import get_logger
 
 # Left To Support Legacy TypeVars
 SrvType = TypeVar('SrvType')
@@ -243,3 +246,24 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def get_logger_name(self) -> str:
+        with self.handle:
+            return self.__client.get_logger_name()
+        
+    def set_on_new_response_callback(self, callback: Callable[[int], None]) -> None:
+        logger = get_logger(self.get_logger_name())
+
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                logger.error(f'Caught exception in on response callback for client: {self.service_name}')
+                logger.error(traceback.format_exc())
+    
+        with self.handle:
+            self.__client.set_on_new_response_callback(safe_callback)
+
+    def clear_on_new_response_callback(self) -> None:
+        with self.handle:
+            self.__client.clear_on_new_response_callback()
