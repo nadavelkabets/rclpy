@@ -240,6 +240,9 @@ define_service(py::object module)
     "service_send_response", &Service::service_send_response,
     "Send a response")
   .def(
+    "get_logger_name", &Service::get_logger_name,
+    "Get the name of the logger associated with the node of the service.")
+  .def(
     "service_take_request", &Service::service_take_request,
     "Take a request from a given service")
   .def(

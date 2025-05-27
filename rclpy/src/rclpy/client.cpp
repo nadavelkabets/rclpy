@@ -237,6 +237,9 @@ define_client(py::object module)
     "service_server_is_available", &Client::service_server_is_available,
     "Return true if the service server is available")
   .def(
+    "get_logger_name", &Client::get_logger_name,
+    "Get the name of the logger associated with the node of the client.")
+  .def(
     "take_response", &Client::take_response,
     "Take a received response from an earlier request")
   .def(
