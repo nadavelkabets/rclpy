@@ -151,8 +151,8 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
                 logger.error(traceback.format_exc())
     
         with self.handle:
-            self.__service.set_on_new_message_callback(safe_callback)
+            self.__service.set_on_new_request_callback(safe_callback)
 
     def clear_on_new_request_callback(self) -> None:
         with self.handle:
-            self.__service.clear_on_new_message_callback()
+            self.__service.clear_on_new_request_callback()
