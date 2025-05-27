@@ -174,7 +174,90 @@ class TimeoutObject:
         self._timeout = timeout
 
 
-class Executor(ContextManager['Executor']):
+class ExecutorBase:
+    def _take_subscription(
+            self,
+            sub: Subscription[Any]
+    ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with sub.handle:
+                msg_info = sub.handle.take_message(sub.msg_type, sub.raw)
+                if msg_info is None:
+                    return None
+
+                if sub._callback_type is Subscription.CallbackType.MessageOnly:
+                    msg_tuple: Union[Tuple[Msg], Tuple[Msg, MessageInfo]] = (msg_info[0], )
+                else:
+                    msg_tuple = msg_info
+
+                async def _execute() -> None:
+                    await await_or_execute(sub.callback, *msg_tuple)
+
+                return _execute
+        except InvalidHandle:
+            # Subscription is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_subscription below
+            pass
+
+        return None
+    
+    def _take_client(self, client: Client[Any, Any]
+                     ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with client.handle:
+                header_and_response = client.handle.take_response(client.srv_type.Response)
+
+            async def _execute() -> None:
+                header, response = header_and_response
+                if header is None:
+                    return
+                try:
+                    sequence = header.request_id.sequence_number
+                    future = client.get_pending_request(sequence)
+                except KeyError:
+                    # The request was cancelled
+                    pass
+                else:
+                    future._set_executor(self)
+                    future.set_result(response)
+            return _execute
+
+        except InvalidHandle:
+            # Client is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_client below
+            pass
+
+        return None
+
+    def _take_service(self, srv: Service[Any, Any]
+                      ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
+        try:
+            with srv.handle:
+                request_and_header = srv.handle.service_take_request(srv.srv_type.Request)
+
+            async def _execute() -> None:
+                (request, header) = request_and_header
+                if header is None:
+                    return
+
+                response = await await_or_execute(srv.callback, request, srv.srv_type.Response())
+                srv.send_response(response, header)
+            return _execute
+        except InvalidHandle:
+            # Service is a Destroyable, which means that on __enter__ it can throw an
+            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
+            # by just returning an empty argument, which means we will skip doing any real work
+            # in _execute_service below
+            pass
+
+        return None
+
+
+class Executor(ContextManager['Executor'], ExecutorBase):
     """
     The base class for an executor.
 
@@ -463,85 +546,6 @@ class Executor(ContextManager['Executor']):
             # InvalidHandle exception if the entity has already been destroyed.  Handle that here
             # by just returning an empty argument, which means we will skip doing any real work
             # in _execute_timer below
-            pass
-
-        return None
-
-    def _take_subscription(self, sub: Subscription[Any]
-                           ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with sub.handle:
-                msg_info = sub.handle.take_message(sub.msg_type, sub.raw)
-                if msg_info is None:
-                    return None
-
-                if sub._callback_type is Subscription.CallbackType.MessageOnly:
-                    msg_tuple: Union[Tuple[Msg], Tuple[Msg, MessageInfo]] = (msg_info[0], )
-                else:
-                    msg_tuple = msg_info
-
-                async def _execute() -> None:
-                    await await_or_execute(sub.callback, *msg_tuple)
-
-                return _execute
-        except InvalidHandle:
-            # Subscription is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_subscription below
-            pass
-
-        return None
-
-    def _take_client(self, client: Client[Any, Any]
-                     ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with client.handle:
-                header_and_response = client.handle.take_response(client.srv_type.Response)
-
-            async def _execute() -> None:
-                header, response = header_and_response
-                if header is None:
-                    return
-                try:
-                    sequence = header.request_id.sequence_number
-                    future = client.get_pending_request(sequence)
-                except KeyError:
-                    # The request was cancelled
-                    pass
-                else:
-                    future._set_executor(self)
-                    future.set_result(response)
-            return _execute
-
-        except InvalidHandle:
-            # Client is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_client below
-            pass
-
-        return None
-
-    def _take_service(self, srv: Service[Any, Any]
-                      ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
-        try:
-            with srv.handle:
-                request_and_header = srv.handle.service_take_request(srv.srv_type.Request)
-
-            async def _execute() -> None:
-                (request, header) = request_and_header
-                if header is None:
-                    return
-
-                response = await await_or_execute(srv.callback, request, srv.srv_type.Response())
-                srv.send_response(response, header)
-            return _execute
-        except InvalidHandle:
-            # Service is a Destroyable, which means that on __enter__ it can throw an
-            # InvalidHandle exception if the entity has already been destroyed.  Handle that here
-            # by just returning an empty argument, which means we will skip doing any real work
-            # in _execute_service below
             pass
 
         return None
