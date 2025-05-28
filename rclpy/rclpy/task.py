@@ -69,7 +69,9 @@ class Future(Generic[T]):
     def __await__(self) -> Generator[None, None, Optional[T]]:
         # Yield if the task is not finished
         while self._pending():
-            yield
+            # yield self will crash any asyncio task awaiting the rclpy future
+            # bare yield causes the asyncio event loop to busy loop
+            yield self
         return self.result()
 
     def _pending(self) -> bool:
