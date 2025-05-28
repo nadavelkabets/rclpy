@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from enum import Enum
 import inspect
 import sys
@@ -33,13 +34,41 @@ def _fake_weakref() -> None:
     return None
 
 
+def _chain_future(rclpy_future: 'Future', asyncio_future: asyncio.Future) -> None:
+    """Chain two futures so that when one completes, so does the other.
+
+    The result (or exception) of source will be copied to destination.
+    If destination is cancelled, source gets cancelled too.
+    """
+
+    def _call_check_cancel(asyncio_future: asyncio.Future):
+        if asyncio_future.cancelled():
+            rclpy_future.cancel()
+
+    def _call_set_state(rclpy_future: 'Future'):
+        if asyncio_future.cancelled():
+            return
+        if rclpy_future.cancelled():
+            asyncio_future.cancel()
+        else:
+            exception = rclpy_future.exception()
+            if exception is not None:
+                asyncio_future.set_exception(exception)
+            else:
+                result = rclpy_future.result()
+                asyncio_future.set_result(result)
+
+    asyncio_future.add_done_callback(_call_check_cancel)
+    rclpy_future.add_done_callback(_call_set_state)
+
+
 class FutureState(Enum):
     """States defining the lifecycle of a future."""
 
     PENDING = 'PENDING'
     CANCELLED = 'CANCELLED'
-    FINISHED = 'FINISHED'
-
+    FINISHED = 'FINISHED'            
+            
 
 class Future(Generic[T]):
     """Represent the outcome of a task in the future."""
@@ -65,12 +94,26 @@ class Future(Generic[T]):
             print(
                 'The following exception was never retrieved: ' + str(self._exception),
                 file=sys.stderr)
+    
+    def _to_asyncio(self, loop: asyncio.AbstractEventLoop) -> asyncio.Future:
+        fut = loop.create_future()
+        _chain_future(self, fut)
+        return fut
 
     def __await__(self) -> Generator[None, None, Optional[T]]:
-        # Yield if the task is not finished
-        while self._pending():
-            yield
-        return self.result()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+            
+        if loop:
+            return (yield from self._to_asyncio(loop))
+        else:
+            # Yield if the task is not finished
+            while self._pending():
+                yield
+                
+            return self.result()
 
     def _pending(self) -> bool:
         return self._state == FutureState.PENDING
