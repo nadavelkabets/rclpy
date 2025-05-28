@@ -65,6 +65,10 @@ class AsyncioExecutor(ExecutorBase):
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
 
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        return self._loop
+
     def __enter__(self) -> 'AsyncioExecutor':
         return self
 
@@ -137,6 +141,7 @@ class AsyncioExecutor(ExecutorBase):
             with _timeout(timeout, self._loop):
                 self._loop.run_until_complete(future)
 
+    # TODO: should this function accept an asyncio Future or a rclpy Future?
     def spin_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
         with _timeout(timeout, self._loop):
             self._loop.run_until_complete(future)
