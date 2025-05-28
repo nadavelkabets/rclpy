@@ -1,18 +1,20 @@
-import pytest
-import rclpy
 import asyncio
-from rclpy.task import Future
-from rclpy.experimental.asyncio_executor import AsyncioExecutor
-from rclpy.executors import ExecutorBase
-from rclpy.node import Node
-from std_msgs.msg import String
-from unittest.mock import Mock
-import time
 import math
+import time
 from contextlib import contextmanager
-from test_msgs.srv import BasicTypes
+from unittest.mock import Mock
+
+import pytest
+from rclpy.executors import ExecutorBase
+from rclpy.experimental.asyncio_executor import AsyncioExecutor
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+from rclpy.task import Future
 from std_msgs.msg import String
-from rclpy.qos import QoSProfile, HistoryPolicy, DurabilityPolicy
+from test_msgs.srv import BasicTypes
+
+import rclpy
+
 
 @contextmanager
 def attach_to_executor(node: Node, executor: ExecutorBase):
@@ -20,11 +22,13 @@ def attach_to_executor(node: Node, executor: ExecutorBase):
     yield
     executor.remove_node(node)
 
+
 @pytest.fixture
 def rclpy_init():
     rclpy.init()
     yield
     rclpy.shutdown()
+
 
 @pytest.fixture
 def asyncio_loop():
@@ -33,11 +37,13 @@ def asyncio_loop():
     yield loop
     loop.close()
 
+
 @pytest.fixture
 def asyncio_executor(asyncio_loop):
     ex = AsyncioExecutor(asyncio_loop)
     yield ex
     ex.shutdown()
+
 
 @pytest.fixture
 def test_node(rclpy_init):
@@ -45,10 +51,12 @@ def test_node(rclpy_init):
     yield node
     node.destroy_node()
 
+
 @pytest.fixture
 def attached_test_node(test_node, asyncio_executor):
     with attach_to_executor(test_node, asyncio_executor):
         yield test_node
+
 
 def test_rclpy_future_crashes_asyncio_task():
     async def test_coro():
@@ -57,10 +65,11 @@ def test_rclpy_future_crashes_asyncio_task():
     with pytest.raises(RuntimeError):
         asyncio.run(test_coro())
 
+
 def test_wrapped_future_is_done_when_future_is_done(asyncio_executor):
     ros_fut = Future()
 
-    async def test_coro():    
+    async def test_coro():
         return await asyncio_executor.wrap_future(ros_fut)
 
     task = asyncio_executor.create_task(test_coro())
@@ -69,10 +78,11 @@ def test_wrapped_future_is_done_when_future_is_done(asyncio_executor):
     asyncio_executor.spin_until_future_complete(task)
     assert task.result() == "finished"
 
+
 def test_wrapped_future_is_cancelled_when_future_is_cancelled(asyncio_executor):
     ros_fut = Future()
 
-    async def test_coro():    
+    async def test_coro():
         return await asyncio_executor.wrap_future(ros_fut)
 
     task = asyncio_executor.create_task(test_coro())
@@ -80,33 +90,37 @@ def test_wrapped_future_is_cancelled_when_future_is_cancelled(asyncio_executor):
     with pytest.raises(asyncio.CancelledError):
         asyncio_executor.spin_until_future_complete(task)
 
+
 def test_spin_once_returns_after_callback(asyncio_executor, attached_test_node):
     mock = Mock()
     msg = String(data="test")
-    attached_test_node.create_subscription(String, "/test", mock, 10)    
+    attached_test_node.create_subscription(String, "/test", mock, 10)
     pub = attached_test_node.create_publisher(String, "/test", 10)
     pub.publish(msg)
-    
+
     start_time = time.time()
     asyncio_executor.spin_once()
     assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)
     mock.assert_called_once_with(msg)
+
 
 def test_spin_once_returns_after_timeout(asyncio_executor):
     start_time = time.time()
     asyncio_executor.spin_once(timeout=0.5)
     assert math.isclose(time.time() - start_time, 0.5, abs_tol=0.01)
 
+
 def test_executor_executes_existing_callbacks_from_initialized_node(test_node, asyncio_executor):
     mock = Mock()
     msg = String(data="test")
-    test_node.create_subscription(String, "/test", mock, 10)    
+    test_node.create_subscription(String, "/test", mock, 10)
     pub = test_node.create_publisher(String, "/test", 10)
     pub.publish(msg)
     with attach_to_executor(test_node, asyncio_executor):
         asyncio_executor.spin_once()
-    
+
     mock.assert_called_once_with(msg)
+
 
 def test_executor_discards_subscription_from_removed_node(test_node, asyncio_executor):
     mock = Mock()
@@ -116,11 +130,12 @@ def test_executor_discards_subscription_from_removed_node(test_node, asyncio_exe
 
     with attach_to_executor(test_node, asyncio_executor):
         asyncio_executor.spin_once(timeout=0.01)
-    
+
     pub.publish(msg)
     asyncio_executor.spin_once(timeout=0.01)
-    
+
     mock.assert_not_called()
+
 
 def test_executor_attaches_to_running_asyncio_loop(asyncio_loop):
     async def test_coro():
@@ -131,6 +146,7 @@ def test_executor_attaches_to_running_asyncio_loop(asyncio_loop):
     ex = task.result()
     assert asyncio_loop is ex.loop
     ex.shutdown()
+
 
 def test_basic_service_call(asyncio_executor, attached_test_node):
     def cb(request, response):
@@ -143,11 +159,9 @@ def test_basic_service_call(asyncio_executor, attached_test_node):
     asyncio_executor.spin_until_future_complete(asyncio_executor.wrap_future(fut))
     assert fut.result().string_value == "True"
 
+
 def test_transient_local_subscriber_receives_queued_messages(test_node, asyncio_executor):
-    qos = QoSProfile(
-        history=HistoryPolicy.KEEP_ALL,
-        durability=DurabilityPolicy.TRANSIENT_LOCAL
-    )
+    qos = QoSProfile(history=HistoryPolicy.KEEP_ALL, durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = test_node.create_publisher(String, "/test", qos)
 
     for _ in range(5):
@@ -160,6 +174,7 @@ def test_transient_local_subscriber_receives_queued_messages(test_node, asyncio_
         asyncio_executor.spin_once()
 
     assert len(received) == 5
+
 
 def test_service_unavailable_after_node_removed(test_node, asyncio_executor):
     def service_cb(req, resp):

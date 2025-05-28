@@ -1,23 +1,23 @@
 import asyncio
-from functools import partial
-from typing import Any, Callable, Coroutine, Optional, Set, TypeVar, Union, Type, Generator
-from contextlib import contextmanager
 import time
+from contextlib import contextmanager
+from functools import partial
+from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
+                    TypeVar, Union)
+
+from rclpy.client import Client
+from rclpy.executors import ExecutorBase, TracebackType, await_or_execute
+from rclpy.node import Node
+from rclpy.service import Service
+from rclpy.subscription import Subscription
 
 import rclpy
-from rclpy.node import Node
-from rclpy.subscription import Subscription
-from rclpy.client import Client
-from rclpy.service import Service
-from rclpy.executors import ExecutorBase, TracebackType, await_or_execute
 
 EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client])
 
+
 @contextmanager
-def _timeout(
-    timeout: int,
-    loop: asyncio.AbstractEventLoop
-) -> Generator[None, None, None]:
+def _timeout(timeout: int, loop: asyncio.AbstractEventLoop) -> Generator[None, None, None]:
     handle = None
     if timeout:
         handle = loop.call_later(timeout, loop.stop)
@@ -25,6 +25,7 @@ def _timeout(
 
     if handle and handle.when() > time.time():
         handle.cancel()
+
 
 def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
     """Chain two futures so that when one completes, so does the other.
@@ -52,6 +53,7 @@ def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) ->
 
     asyncio_future.add_done_callback(_call_check_cancel)
     rclpy_future.add_done_callback(_call_set_state)
+
 
 class AsyncioExecutor(ExecutorBase):
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
@@ -86,7 +88,7 @@ class AsyncioExecutor(ExecutorBase):
         """
         self._nodes.clear()
         self._update_entities_from_nodes()
-        
+
         for task in self._tasks:
             task.cancel()
 
@@ -96,7 +98,7 @@ class AsyncioExecutor(ExecutorBase):
         self._tasks.clear()
         self._loop = None
 
-    def _get_loop(self) -> asyncio.AbstractEventLoop:     
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
             return asyncio.get_running_loop()
         except RuntimeError:
@@ -108,7 +110,6 @@ class AsyncioExecutor(ExecutorBase):
         task = self._loop.create_task(coro)
         task.add_done_callback(self._exception_handler)
         self._tasks.add(task)
-
 
     def _exception_handler(self, fut) -> None:
         ex = fut.exception()
@@ -128,7 +129,7 @@ class AsyncioExecutor(ExecutorBase):
     @contextmanager
     def _stop_after_callback(self) -> Generator[None, None, None]:
         self._should_stop_after_callback = True
-        
+
         yield
 
         self._should_stop_after_callback = False
@@ -136,17 +137,23 @@ class AsyncioExecutor(ExecutorBase):
             self._stop_handle.cancel()
             self._stop_handle = None
 
-    def spin_once_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
+    def spin_once_until_future_complete(
+        self, future: asyncio.Future, timeout: Optional[int] = None
+    ) -> None:
         with self._stop_after_callback():
             with _timeout(timeout, self._loop):
                 self._loop.run_until_complete(future)
 
     # TODO: should this function accept an asyncio Future or a rclpy Future?
-    def spin_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
+    def spin_until_future_complete(
+        self, future: asyncio.Future, timeout: Optional[int] = None
+    ) -> None:
         with _timeout(timeout, self._loop):
             self._loop.run_until_complete(future)
 
-    def create_task(self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any) -> asyncio.Task:
+    def create_task(
+        self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
+    ) -> asyncio.Task:
         if not asyncio.iscoroutine(callback):
             callback = await_or_execute(callback, *args, **kwargs)
 
@@ -176,7 +183,7 @@ class AsyncioExecutor(ExecutorBase):
 
     def create_future(self) -> asyncio.Future:
         return self._loop.create_future()
-    
+
     def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
         _chain_future(rclpy_future, asyncio_future)
@@ -192,27 +199,21 @@ class AsyncioExecutor(ExecutorBase):
         self._update_entity_set(
             self._subscriptions,
             subscriptions,
-            lambda s: s.set_on_new_message_callback(
-                    partial(self._handle_ready_subscription, s)
-            ),
+            lambda s: s.set_on_new_message_callback(partial(self._handle_ready_subscription, s)),
             lambda s: s.clear_on_new_message_callback(),
         )
 
         self._update_entity_set(
             self._clients,
             clients,
-            lambda c: c.set_on_new_response_callback(
-                    partial(self._handle_ready_client, c)
-            ),
+            lambda c: c.set_on_new_response_callback(partial(self._handle_ready_client, c)),
             lambda c: c.clear_on_new_response_callback(),
         )
 
         self._update_entity_set(
             self._services,
             services,
-            lambda s: s.set_on_new_request_callback(
-                    partial(self._handle_ready_service, s)
-            ),
+            lambda s: s.set_on_new_request_callback(partial(self._handle_ready_service, s)),
             lambda s: s.clear_on_new_request_callback(),
         )
 
@@ -233,47 +234,26 @@ class AsyncioExecutor(ExecutorBase):
             current_set.remove(h)
             removed_cb(h)
 
-    def _handle_ready_subscription(
-        self,
-        subscription: Subscription,
-        number_of_events: int
-    ) -> None:
+    def _handle_ready_subscription(self, subscription: Subscription, number_of_events: int) -> None:
         self._loop.call_soon_threadsafe(
-            self._handle_ready_entity,
-            self._take_subscription,
-            subscription,
-            number_of_events
-        )
-        
-    def _handle_ready_client(
-        self,
-        client: Client,
-        number_of_events: int
-    ) -> None:
-        self._loop.call_soon_threadsafe(
-            self._handle_ready_entity,
-            self._take_client,
-            client,
-            number_of_events
+            self._handle_ready_entity, self._take_subscription, subscription, number_of_events
         )
 
-    def _handle_ready_service(
-        self,
-        service: Service,
-        number_of_events: int
-    ) -> None:
+    def _handle_ready_client(self, client: Client, number_of_events: int) -> None:
         self._loop.call_soon_threadsafe(
-            self._handle_ready_entity,
-            self._take_service,
-            service,
-            number_of_events
+            self._handle_ready_entity, self._take_client, client, number_of_events
+        )
+
+    def _handle_ready_service(self, service: Service, number_of_events: int) -> None:
+        self._loop.call_soon_threadsafe(
+            self._handle_ready_entity, self._take_service, service, number_of_events
         )
 
     def _handle_ready_entity(
         self,
         take_entity_callback: Callable[[EntityT], Optional[Coroutine]],
         entity: EntityT,
-        number_of_events: int
+        number_of_events: int,
     ) -> None:
         for _ in range(number_of_events):
             coro = take_entity_callback(entity)
