@@ -130,12 +130,12 @@ class AsyncioExecutor(ExecutorBase):
         self._stop_handle.cancel()
         self._stop_handle = None
 
-    def spin_once_until_future_complete(self, future: asyncio.Future, timeout) -> None:
+    def spin_once_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
         with self._stop_after_callback():
             with _timeout(timeout, self._loop):
                 self._loop.run_until_complete(future)
 
-    def spin_until_future_complete(self, future: asyncio.Future, timeout) -> None:
+    def spin_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
         with _timeout(timeout, self._loop):
             self._loop.run_until_complete(future)
 
@@ -143,7 +143,10 @@ class AsyncioExecutor(ExecutorBase):
         if not asyncio.iscoroutine(callback):
             callback = await_or_execute(callback, *args, **kwargs)
 
-        return asyncio.create_task(callback)
+        return self._loop.create_task(callback)
+
+    def call_soon(self, callback: Callable, *args: Any, **kwargs: Any) -> asyncio.Handle:
+        return self._loop.call_soon(callback, *args, **kwargs)
 
     def wake(self) -> None:
         self._update_entities_from_nodes()
