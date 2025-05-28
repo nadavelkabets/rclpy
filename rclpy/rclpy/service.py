@@ -20,6 +20,7 @@ from typing import Type
 from typing import TypeVar
 from typing import Union
 import traceback
+import weakref
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
@@ -43,7 +44,8 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
         srv_name: str,
         callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
         callback_group: CallbackGroup,
-        qos_profile: QoSProfile
+        qos_profile: QoSProfile,
+        destroy_callback: Callable[['Service'], bool]
     ) -> None:
         """
         Create a container for a ROS service server.
@@ -68,6 +70,7 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
         self.qos_profile = qos_profile
+        self._destroy_callback = weakref.WeakMethod(destroy_callback)
 
     def send_response(self, response: SrvResponseT,
                       header: Union[_rclpy.rmw_service_info_t, _rclpy.rmw_request_id_t]) -> None:
@@ -124,6 +127,9 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
            should call :meth:`.Node.destroy_service`.
         """
         self.__service.destroy_when_not_in_use()
+        cb = self._destroy_callback()
+        if cb:
+            cb(self)
 
     def __enter__(self) -> 'Service[SrvRequestT, SrvResponseT]':
         return self

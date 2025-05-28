@@ -1708,7 +1708,8 @@ class Node:
             subscription = Subscription(
                 subscription_object, msg_type,
                 topic, callback, callback_group, qos_profile, raw,
-                event_callbacks=event_callbacks or SubscriptionEventCallbacks())
+                event_callbacks=event_callbacks or SubscriptionEventCallbacks(),
+                destroy_callback=self.destroy_subscription)
         except Exception:
             subscription_object.destroy_when_not_in_use()
             raise
@@ -1757,7 +1758,7 @@ class Node:
         client: Client[SrvRequestT, SrvResponseT] = Client(
             self.context,
             client_impl, srv_type, srv_name, qos_profile,
-            callback_group)
+            callback_group, destroy_callback=self.destroy_client)
         callback_group.add_entity(client)
         self._clients.append(client)
         self._wake_executor()
@@ -1801,7 +1802,8 @@ class Node:
 
         service = Service(
             service_impl,
-            srv_type, srv_name, callback, callback_group, qos_profile)
+            srv_type, srv_name, callback, callback_group, qos_profile,
+            destroy_callback=self.destroy_service)
         callback_group.add_entity(service)
         self._services.append(service)
         self._wake_executor()
@@ -1838,7 +1840,7 @@ class Node:
             clock = self._clock
         timer = Timer(
             callback, callback_group, timer_period_nsec, clock, context=self.context,
-            autostart=autostart)
+            autostart=autostart, destroy_callback=self.destroy_timer)
 
         callback_group.add_entity(timer)
         self._timers.append(timer)

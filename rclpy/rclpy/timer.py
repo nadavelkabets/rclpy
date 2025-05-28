@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading
+import weakref
 
 from types import TracebackType
 from typing import Callable
@@ -64,7 +65,6 @@ class TimerInfo:
 
 
 class Timer:
-
     def __init__(
         self,
         callback: Union[Callable[[], None], Callable[[TimerInfo], None], None],
@@ -73,7 +73,8 @@ class Timer:
         clock: Clock,
         *,
         context: Optional[Context] = None,
-        autostart: bool = True
+        autostart: bool = True,
+        destroy_callback: Callable[['Timer'], bool]
     ) -> None:
         """
         Create a Timer.
@@ -107,6 +108,7 @@ class Timer:
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
+        self._destroy_callback = weakref.WeakMethod(destroy_callback)
 
     @property
     def handle(self) -> _rclpy.Timer:
@@ -120,6 +122,9 @@ class Timer:
            call :meth:`.Node.destroy_timer`.
         """
         self.__timer.destroy_when_not_in_use()
+        cb = self._destroy_callback()
+        if cb:
+            cb(self)
 
     @property
     def clock(self) -> Clock:

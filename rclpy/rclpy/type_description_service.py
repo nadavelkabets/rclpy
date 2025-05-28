@@ -96,7 +96,8 @@ class TypeDescriptionService:
             srv_name=self.service_name,
             callback=self._service_callback,
             callback_group=node.default_callback_group,
-            qos_profile=qos_profile_services_default)
+            qos_profile=qos_profile_services_default,
+            destroy_callback=node.destroy_service)
         node.default_callback_group.add_entity(service)
         node._services.append(service)
         node._wake_executor()

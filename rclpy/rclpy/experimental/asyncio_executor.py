@@ -6,11 +6,14 @@ from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
                     TypeVar, Union)
 
 from rclpy.client import Client
+from rclpy.constants import S_TO_NS
+from rclpy.duration import Duration
 from rclpy.executors import ExecutorBase, ExternalShutdownException, TracebackType, await_or_execute
 from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
 from rclpy.subscription import Subscription
+from rclpy.timer import Timer
 
 import rclpy
 from rclpy.utilities import get_default_context
@@ -55,6 +58,7 @@ class AsyncioExecutor(ExecutorBase):
         *,
         context: Optional[Context] = None
     ) -> None: 
+        self._loop = loop or self._get_loop()
         self._context = context or get_default_context()
         self._context.on_shutdown(self.shutdown)
 
@@ -63,10 +67,11 @@ class AsyncioExecutor(ExecutorBase):
         self._subscriptions: Set[Subscription] = set()
         self._clients: Set[Client] = set()
         self._services: Set[Service] = set()
-        self._loop = loop or self._get_loop()
-
+        self._timers: Set[Timer] = set()
+        
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
+        self._update_timers_handle: Optional[asyncio.Handle] = None
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -208,12 +213,14 @@ class AsyncioExecutor(ExecutorBase):
         _chain_future(rclpy_future, asyncio_future)
         return asyncio_future
 
+    # TODO: should optimize this function to run less times?
     def _update_entities_from_nodes(self) -> None:
-        subscriptions, clients, services = set(), set(), set()
+        subscriptions, clients, services, timers = set(), set(), set(), set()
         for node in self._nodes:
             subscriptions.update(node.subscriptions)
             clients.update(node.clients)
             services.update(node.services)
+            timers.update(node.timers)
 
         self._update_entity_set(
             self._subscriptions,
@@ -235,6 +242,9 @@ class AsyncioExecutor(ExecutorBase):
             lambda s: s.set_on_new_request_callback(partial(self._handle_ready_service, s)),
             lambda s: s.clear_on_new_request_callback(),
         )
+
+        self._timers = timers
+        self._update_timers()
 
     def _update_entity_set(
         self,
@@ -267,6 +277,37 @@ class AsyncioExecutor(ExecutorBase):
         self._loop.call_soon_threadsafe(
             self._handle_ready_entity, self._take_service, service, number_of_events
         )
+
+    def _execute_ready_timer(self, timer: Timer):
+        with timer.handle:
+            timer.handle.call_timer()
+
+        async def wrapped_callback():
+            # try:
+            await timer.callback()
+            # except Exception:
+            #     get_logger(timer.get_logger_name()).error(traceback.format_exc())
+
+        task = self._loop.create_task(wrapped_callback())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.remove)
+
+    def _update_timers(self):
+        if self._update_timers_handle and not self._update_timers_handle.cancelled():
+            self._update_timers_handle.cancel()
+        
+        next_jump_time_seconds = 0
+        for timer in self._timers:
+            if timer.is_ready():
+                self._execute_ready_timer(timer)
+            else:
+                next_jump_time_seconds = min(
+                    next_jump_time_seconds,
+                    timer.time_until_next_call() / S_TO_NS
+                )
+
+        if not self._loop.is_closed():
+            self._update_timers_handle = self._loop.call_later(next_jump_time_seconds, self._update_timers)
 
     def _handle_ready_entity(
         self,

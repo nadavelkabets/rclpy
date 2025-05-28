@@ -208,3 +208,10 @@ def test_executor_crashes_if_context_shuts_down_during_spin():
     executor.call_soon(executor.context.shutdown)
     with pytest.raises(ExternalShutdownException):
         executor.spin()
+
+def test_timer_jumps_when_expected(attached_test_node, asyncio_executor):
+    future = asyncio_executor.create_future()
+    timer = attached_test_node.create_timer(0.5, lambda: future.set_result(None))
+    start_time = time.time()
+    asyncio_executor.spin_until_future_complete(future, timeout=0.6)
+    assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1) 
