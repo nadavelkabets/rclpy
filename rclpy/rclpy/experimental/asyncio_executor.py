@@ -1,30 +1,23 @@
 import asyncio
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import partial
 from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
                     TypeVar, Union)
 
 from rclpy.client import Client
-from rclpy.executors import ExecutorBase, TracebackType, await_or_execute
+from rclpy.executors import ExecutorBase, ExternalShutdownException, TracebackType, await_or_execute
+from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
 from rclpy.subscription import Subscription
 
 import rclpy
+from rclpy.utilities import get_default_context
+from rclpy.context import Context
+import traceback
 
 EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client])
-
-
-@contextmanager
-def _timeout(timeout: int, loop: asyncio.AbstractEventLoop) -> Generator[None, None, None]:
-    handle = None
-    if timeout:
-        handle = loop.call_later(timeout, loop.stop)
-    yield
-
-    if handle and handle.when() > time.time():
-        handle.cancel()
 
 
 def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
@@ -56,7 +49,15 @@ def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) ->
 
 
 class AsyncioExecutor(ExecutorBase):
-    def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+    def __init__(
+        self,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+        *,
+        context: Optional[Context] = None
+    ) -> None: 
+        self._context = context or get_default_context()
+        self._context.on_shutdown(self.shutdown)
+
         self._tasks: Set[asyncio.Task] = set()
         self._nodes: Set[Node] = set()
         self._subscriptions: Set[Subscription] = set()
@@ -92,11 +93,8 @@ class AsyncioExecutor(ExecutorBase):
         for task in self._tasks:
             task.cancel()
 
-        if not self._loop.is_running():
-            self._loop.close()
-
-        self._tasks.clear()
-        self._loop = None
+        if self._loop.is_running():
+            self._loop.stop()
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
@@ -106,25 +104,49 @@ class AsyncioExecutor(ExecutorBase):
             asyncio.set_event_loop(loop)
             return loop
 
-    def _execute_entity(self, coro: Coroutine) -> None:
-        task = self._loop.create_task(coro)
-        task.add_done_callback(self._exception_handler)
-        self._tasks.add(task)
+    @contextmanager
+    def _timeout(self, timeout: int) -> Generator[None, None, None]:
+        handle = None
+        if timeout:
+            handle = self._loop.call_later(timeout, self._loop.stop)
+        yield
 
-    def _exception_handler(self, fut) -> None:
-        ex = fut.exception()
-        if ex:
-            raise ex
+        if handle and handle.when() > time.time():
+            handle.cancel()
 
-        self._tasks.remove(fut)
+    def _spin(
+        self,
+        once: bool = False,
+        future: Optional[asyncio.Future] = None,
+        timeout: Optional[int] = None
+    ):
+        if not self._context.ok():
+            return
+        
+        with ExitStack() as context:
+            if once:
+                context.enter_context(self._stop_after_callback())
+            if timeout:
+                context.enter_context(self._timeout(timeout))
+
+            if future:
+                self._loop.run_until_complete(future)
+            else:
+                self._loop.run_forever()
+
+        if not self._context.ok():
+            raise ExternalShutdownException()
 
     def spin(self) -> None:
-        self._loop.run_forever()
+        self._spin()
+
+    @property
+    def context(self) -> Context:
+        """Get the context associated with the executor."""
+        return self._context
 
     def spin_once(self, timeout: Optional[int] = None) -> None:
-        with self._stop_after_callback():
-            with _timeout(timeout, self._loop):
-                self._loop.run_forever()
+        self._spin(once=True, timeout=timeout)
 
     @contextmanager
     def _stop_after_callback(self) -> Generator[None, None, None]:
@@ -139,17 +161,14 @@ class AsyncioExecutor(ExecutorBase):
 
     def spin_once_until_future_complete(
         self, future: asyncio.Future, timeout: Optional[int] = None
-    ) -> None:
-        with self._stop_after_callback():
-            with _timeout(timeout, self._loop):
-                self._loop.run_until_complete(future)
+    ) -> None: 
+        self._spin(once=True, future=future, timeout=timeout)
 
     # TODO: should this function accept an asyncio Future or a rclpy Future?
     def spin_until_future_complete(
         self, future: asyncio.Future, timeout: Optional[int] = None
     ) -> None:
-        with _timeout(timeout, self._loop):
-            self._loop.run_until_complete(future)
+        self._spin(future=future, timeout=timeout)
 
     def create_task(
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
@@ -162,7 +181,7 @@ class AsyncioExecutor(ExecutorBase):
     def call_soon(self, callback: Callable, *args: Any, **kwargs: Any) -> asyncio.Handle:
         return self._loop.call_soon(callback, *args, **kwargs)
 
-    def wake(self) -> None:
+    def wake(self) -> None:        
         self._update_entities_from_nodes()
 
     def add_node(self, node: Node) -> bool:
@@ -255,12 +274,23 @@ class AsyncioExecutor(ExecutorBase):
         entity: EntityT,
         number_of_events: int,
     ) -> None:
+        if not self._context.ok():
+            raise ExternalShutdownException()
+        
         for _ in range(number_of_events):
-            coro = take_entity_callback(entity)
-            if not coro:
+            callback = take_entity_callback(entity)
+            if not callback:
                 break
+            
+            async def wrapped_callback():
+                try:
+                    await callback()
+                except Exception:
+                    get_logger(entity.get_logger_name()).error(traceback.format_exc())
 
-            self._execute_entity(coro())
+            task = self._loop.create_task(wrapped_callback())
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.remove)
 
         if self._should_stop_after_callback and not self._stop_handle:
             self._stop_handle = self._loop.call_soon(self._loop.stop)

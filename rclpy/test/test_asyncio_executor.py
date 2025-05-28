@@ -5,7 +5,8 @@ from contextlib import contextmanager
 from unittest.mock import Mock
 
 import pytest
-from rclpy.executors import ExecutorBase
+from rclpy import Context
+from rclpy.executors import ExecutorBase, ExternalShutdownException
 from rclpy.experimental.asyncio_executor import AsyncioExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
@@ -23,11 +24,11 @@ def attach_to_executor(node: Node, executor: ExecutorBase):
     executor.remove_node(node)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def rclpy_init():
     rclpy.init()
     yield
-    rclpy.shutdown()
+    rclpy.try_shutdown()
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ def asyncio_executor(asyncio_loop):
 
 
 @pytest.fixture
-def test_node(rclpy_init):
+def test_node():
     node = Node("test_node")
     yield node
     node.destroy_node()
@@ -193,3 +194,17 @@ def test_service_unavailable_after_node_removed(test_node, asyncio_executor):
     fut2 = client.call_async(BasicTypes.Request())
     asyncio_executor.spin_once(timeout=0.1)
     assert not fut2.done()
+
+def test_spin_returns_if_context_is_not_ok():
+    executor = AsyncioExecutor()
+    executor.context.shutdown()
+    mock = Mock()
+    executor.call_soon(mock)
+    executor.spin()
+    mock.assert_not_called()
+
+def test_executor_crashes_if_context_shuts_down_during_spin():
+    executor = AsyncioExecutor()
+    executor.call_soon(executor.context.shutdown)
+    with pytest.raises(ExternalShutdownException):
+        executor.spin()
