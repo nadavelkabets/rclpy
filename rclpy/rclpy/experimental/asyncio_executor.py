@@ -116,9 +116,10 @@ class AsyncioExecutor(ExecutorBase):
     def spin(self) -> None:
         self._loop.run_forever()
 
-    def spin_once(self, timeout) -> None:
-        with _timeout(timeout, self._loop):
-            self._loop.run_forever()
+    def spin_once(self, timeout: Optional[int] = None) -> None:
+        with self._stop_after_callback():
+            with _timeout(timeout, self._loop):
+                self._loop.run_forever()
 
     @contextmanager
     def _stop_after_callback(self) -> Generator[None, None, None]:
@@ -127,8 +128,9 @@ class AsyncioExecutor(ExecutorBase):
         yield
 
         self._should_stop_after_callback = False
-        self._stop_handle.cancel()
-        self._stop_handle = None
+        if self._stop_handle:
+            self._stop_handle.cancel()
+            self._stop_handle = None
 
     def spin_once_until_future_complete(self, future: asyncio.Future, timeout: Optional[int] = None) -> None:
         with self._stop_after_callback():
@@ -232,10 +234,10 @@ class AsyncioExecutor(ExecutorBase):
         number_of_events: int
     ) -> None:
         self._loop.call_soon_threadsafe(
-            callback=self._handle_ready_entity,
-            take_entity_callback=self._take_subscription,
-            entity=subscription,
-            number_of_events=number_of_events
+            self._handle_ready_entity,
+            self._take_subscription,
+            subscription,
+            number_of_events
         )
         
     def _handle_ready_client(
@@ -244,10 +246,10 @@ class AsyncioExecutor(ExecutorBase):
         number_of_events: int
     ) -> None:
         self._loop.call_soon_threadsafe(
-            callback=self._handle_ready_entity,
-            take_entity_callback=self._take_client,
-            entity=client,
-            number_of_events=number_of_events
+            self._handle_ready_entity,
+            self._take_client,
+            client,
+            number_of_events
         )
 
     def _handle_ready_service(
@@ -256,10 +258,10 @@ class AsyncioExecutor(ExecutorBase):
         number_of_events: int
     ) -> None:
         self._loop.call_soon_threadsafe(
-            callback=self._handle_ready_entity,
-            take_entity_callback=self._take_service,
-            entity=service,
-            number_of_events=number_of_events
+            self._handle_ready_entity,
+            self._take_service,
+            service,
+            number_of_events
         )
 
     def _handle_ready_entity(
