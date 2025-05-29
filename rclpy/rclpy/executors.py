@@ -959,6 +959,9 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.shutdown()
+        
+    def create_future(self) -> Future:
+        return Future(executor=self)
 
 
 class SingleThreadedExecutor(Executor):

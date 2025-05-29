@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from rclpy import Context
-from rclpy.executors import ExecutorBase, ExternalShutdownException
+from rclpy.executors import AbstractExecutor, ExternalShutdownException
 from rclpy.experimental.asyncio_executor import AsyncioExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
@@ -24,7 +24,7 @@ def asyncio_executor(loop=None) -> Generator[AsyncioExecutor, None, None]:
     executor.shutdown()
 
 @contextmanager
-def attach_to_executor(node: Node, executor: ExecutorBase) -> Generator[None, None, None]:
+def attach_to_executor(node: Node, executor: AbstractExecutor) -> Generator[None, None, None]:
     executor.add_node(node)
     yield
     executor.remove_node(node)
