@@ -7,7 +7,7 @@ from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
 
 from rclpy.client import Client
 from rclpy.constants import S_TO_NS
-from rclpy.executors import ExecutorBase, ExternalShutdownException, TracebackType, await_or_execute
+from rclpy.executors import BaseExecutor, ExternalShutdownException, TracebackType, await_or_execute
 from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
@@ -52,7 +52,7 @@ def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) ->
 def _is_timer_destroyed(timer: Timer):
     return timer.handle.pointer == 0
 
-class AsyncioExecutor(ExecutorBase):
+class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def __init__(
         self,
         loop: Optional[asyncio.AbstractEventLoop] = None,

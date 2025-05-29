@@ -22,7 +22,7 @@ from threading import Lock
 from threading import RLock
 import time
 from types import TracebackType
-from typing import Any
+from typing import Any, Generic
 from typing import Callable
 from typing import ContextManager
 from typing import Coroutine
@@ -64,6 +64,8 @@ from rclpy.waitable import Waitable
 # TODO(jacobperron): Make all entities implement the 'Waitable' interface for better type checking
 
 T = TypeVar('T')
+TaskT = TypeVar('TaskT')
+FutureT = TypeVar('FutureT')
 
 # Avoid import cycle
 if TYPE_CHECKING:
@@ -174,7 +176,60 @@ class TimeoutObject:
         self._timeout = timeout
 
 
-class ExecutorBase:
+class AbstractExecutor(Generic[FutureT, TaskT]):
+    
+    @property
+    def context(self) -> Context:
+        raise NotImplementedError()
+    
+    def wake(self) -> None:
+        raise NotImplementedError()
+    
+    def shutdown(self) -> bool:
+        raise NotImplementedError()
+    
+    def spin(self) -> None:
+        raise NotImplementedError()
+    
+    def spin_until_future_complete(
+        self,
+        future: FutureT,
+        timeout_sec: Optional[float] = None
+    ) -> None:
+        raise NotImplementedError()
+    
+    def spin_once(self, timeout_sec: Optional[float] = None) -> None:
+        raise NotImplementedError()
+    
+    def spin_once_until_future_complete(
+        self,
+        future: Future[Any],
+        timeout_sec: Optional[Union[float, TimeoutObject]] = None
+    ) -> None:
+        raise NotImplementedError()
+    
+    def create_task(
+        self,
+        callback: Union[Callable, Coroutine],
+        *args: Any,
+        **kwargs: Any
+    ) -> TaskT:
+        raise NotImplementedError()
+    
+    def create_future(self) -> FutureT:
+        raise NotImplementedError()
+    
+    def add_node(self, node: 'Node') -> bool:
+        raise NotImplementedError()
+    
+    def remove_node(node: 'Node') -> None:
+        raise NotImplementedError()
+    
+    def get_nodes(self) -> List['Node']:
+        raise NotImplementedError()
+
+
+class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
     def _take_subscription(
             self,
             sub: Subscription[Any]
@@ -257,7 +312,7 @@ class ExecutorBase:
         return None
 
 
-class Executor(ContextManager['Executor'], ExecutorBase):
+class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
     """
     The base class for an executor.
 
