@@ -243,7 +243,13 @@ class AsyncioExecutor(ExecutorBase):
             lambda s: s.clear_on_new_request_callback(),
         )
 
-        self._timers = timers
+        self._update_entity_set(
+            self._timers,
+            timers,
+            lambda s: s.set_on_reset_callback(lambda n: self._update_timers()),
+            lambda s: s.set_on_reset_callback(),
+        )
+
         if self._timers:
             self._update_timers()
 

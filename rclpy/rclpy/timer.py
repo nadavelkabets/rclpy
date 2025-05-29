@@ -14,6 +14,7 @@
 
 import threading
 import weakref
+import traceback
 
 from types import TracebackType
 from typing import Callable
@@ -29,6 +30,7 @@ from rclpy.exceptions import InvalidHandle, ROSInterruptException
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.time import Time
 from rclpy.utilities import get_default_context
+from rclpy.logging import get_logger
 
 
 class TimerInfo:
@@ -74,7 +76,8 @@ class Timer:
         *,
         context: Optional[Context] = None,
         autostart: bool = True,
-        destroy_callback: Callable[['Timer'], bool]
+        logger_name: Optional[str] = None,
+        destroy_callback: Optional[Callable[['Timer'], bool]] = None
     ) -> None:
         """
         Create a Timer.
@@ -108,6 +111,7 @@ class Timer:
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
+        self._logger_name = logger_name
         self._destroy_callback = weakref.WeakMethod(destroy_callback)
 
     @property
@@ -122,6 +126,9 @@ class Timer:
            call :meth:`.Node.destroy_timer`.
         """
         self.__timer.destroy_when_not_in_use()
+        if not self._destroy_callback:
+            return
+        
         cb = self._destroy_callback()
         if cb:
             cb(self)
@@ -143,6 +150,9 @@ class Timer:
         with self.__timer:
             self.__timer.change_timer_period(val)
         self.__timer_period_ns = val
+
+    def get_logger_name(self) -> Optional[str]:
+        return self._logger_name
 
     def is_ready(self) -> bool:
         with self.__timer:
@@ -178,6 +188,31 @@ class Timer:
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def set_on_reset_callback(self, callback: Callable[[int], None]) -> None:
+        try:
+            logger = get_logger(self._logger_name)
+        except ValueError:
+            logger = None
+
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                if logger:
+                    logger.error(f'Caught exception in on reset callback for timer')
+                    logger.error(traceback.format_exc())
+                else:
+                    # TODO: what should we do here? raising in the rcl thread is dangerous
+                    # the Executor also creates a timer and it doesn't have a logger
+                    raise
+    
+        with self.handle:
+            self.__timer.set_on_reset_callback(safe_callback)
+
+    def clear_on_reset_callback(self) -> None:
+        with self.handle:
+            self.__timer.clear_on_reset_callback()
 
 
 class Rate:

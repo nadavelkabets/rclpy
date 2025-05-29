@@ -1840,7 +1840,8 @@ class Node:
             clock = self._clock
         timer = Timer(
             callback, callback_group, timer_period_nsec, clock, context=self.context,
-            autostart=autostart, destroy_callback=self.destroy_timer)
+            autostart=autostart, logger_name=self.__node.logger_name(),
+            destroy_callback=self.destroy_timer)
 
         callback_group.add_entity(timer)
         self._timers.append(timer)

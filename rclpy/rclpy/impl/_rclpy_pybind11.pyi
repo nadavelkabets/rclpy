@@ -586,6 +586,12 @@ class Timer(Destroyable):
     def is_timer_canceled(self) -> bool:
         """Check if a timer is canceled."""
 
+    def set_on_reset_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_reset_callback(self) -> None:
+        ...
+
 
 class Subscription(Destroyable, Generic[MsgT]):
 
