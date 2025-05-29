@@ -49,7 +49,6 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
         srv_name: str,
         qos_profile: QoSProfile,
         callback_group: CallbackGroup,
-        destroy_callback: Callable[['Client'], None]
     ) -> None:
         """
         Create a container for a ROS service client.
@@ -75,7 +74,6 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
-        self._destroy_callback = weakref.WeakMethod(destroy_callback)
 
         self._lock = threading.Lock()
 
@@ -238,9 +236,6 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
            should call :meth:`.Node.destroy_client`.
         """
         self.__client.destroy_when_not_in_use()
-        cb = self._destroy_callback()
-        if cb:
-            cb(self)
 
     def __enter__(self) -> 'Client[SrvRequestT, SrvResponseT]':
         return self

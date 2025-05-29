@@ -54,7 +54,6 @@ class Subscription(Generic[MsgT]):
          qos_profile: QoSProfile,
          raw: bool,
          event_callbacks: SubscriptionEventCallbacks,
-         destroy_callback: Callable[['Subscription'], bool]
     ) -> None:
         """
         Create a container for a ROS subscription.
@@ -83,7 +82,6 @@ class Subscription(Generic[MsgT]):
         self._executor_event = False
         self.qos_profile = qos_profile
         self.raw = raw
-        self._destroy_callback = weakref.WeakMethod(destroy_callback)
 
         self.event_handlers = event_callbacks.create_event_handlers(
             callback_group, subscription_impl, topic)
@@ -111,9 +109,6 @@ class Subscription(Generic[MsgT]):
         for handler in self.event_handlers:
             handler.destroy()
         self.handle.destroy_when_not_in_use()
-        cb = self._destroy_callback()
-        if cb:
-            cb(self)
 
     @property
     def topic_name(self) -> str:

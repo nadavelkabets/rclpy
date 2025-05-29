@@ -77,7 +77,6 @@ class Timer:
         context: Optional[Context] = None,
         autostart: bool = True,
         logger_name: Optional[str] = None,
-        destroy_callback: Optional[Callable[['Timer'], bool]] = None
     ) -> None:
         """
         Create a Timer.
@@ -112,7 +111,6 @@ class Timer:
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
         self._logger_name = logger_name
-        self._destroy_callback = weakref.WeakMethod(destroy_callback) if destroy_callback else None
 
     @property
     def handle(self) -> _rclpy.Timer:
@@ -126,12 +124,6 @@ class Timer:
            call :meth:`.Node.destroy_timer`.
         """
         self.__timer.destroy_when_not_in_use()
-        if not self._destroy_callback:
-            return
-        
-        cb = self._destroy_callback()
-        if cb:
-            cb(self)
 
     @property
     def clock(self) -> Clock:
