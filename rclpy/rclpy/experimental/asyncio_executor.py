@@ -296,15 +296,17 @@ class AsyncioExecutor(ExecutorBase):
         with timer.handle:
             timer.handle.call_timer()
 
-        async def wrapped_callback():
+        def wrapped_callback():
             try:
-                await timer.callback()
+                timer.callback()
             except Exception:
-                get_logger(timer.get_logger_name()).error(traceback.format_exc())
+                logger_name = timer.get_logger_name()
+                if not logger_name:
+                    raise
 
-        task = self._loop.create_task(wrapped_callback())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.remove)
+                get_logger(logger_name).error(traceback.format_exc())
+
+        self._loop.call_soon(wrapped_callback)
 
     def _update_timers(self):
         if self._update_timers_handle and not self._update_timers_handle.cancelled():
