@@ -244,7 +244,8 @@ class AsyncioExecutor(ExecutorBase):
         )
 
         self._timers = timers
-        self._update_timers()
+        if self._timers:
+            self._update_timers()
 
     def _update_entity_set(
         self,
@@ -296,17 +297,21 @@ class AsyncioExecutor(ExecutorBase):
         if self._update_timers_handle and not self._update_timers_handle.cancelled():
             self._update_timers_handle.cancel()
         
-        next_jump_time_seconds = 0
+        next_jump_time_seconds = None
         for timer in self._timers:
             if timer.is_ready():
                 self._execute_ready_timer(timer)
+            
+            timer_next_jump_time = timer.time_until_next_call() / S_TO_NS
+            if next_jump_time_seconds is None:
+                next_jump_time_seconds = timer_next_jump_time
             else:
                 next_jump_time_seconds = min(
                     next_jump_time_seconds,
-                    timer.time_until_next_call() / S_TO_NS
+                    timer_next_jump_time
                 )
 
-        if not self._loop.is_closed():
+        if next_jump_time_seconds and not self._loop.is_closed():
             self._update_timers_handle = self._loop.call_later(next_jump_time_seconds, self._update_timers)
 
     def _handle_ready_entity(
