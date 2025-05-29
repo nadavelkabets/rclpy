@@ -20,7 +20,7 @@ from rclpy.utilities import get_default_context
 from rclpy.context import Context
 import traceback
 
-EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client])
+EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client, Timer])
 
 
 def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
@@ -88,7 +88,7 @@ class AsyncioExecutor(ExecutorBase):
     ) -> None:
         self.shutdown()
 
-    def shutdown(self) -> None:
+    def shutdown(self, close_loop: bool = True) -> None:
         """
         Clear all nodes and close the event loop.
         """
@@ -100,6 +100,8 @@ class AsyncioExecutor(ExecutorBase):
 
         if self._loop.is_running():
             self._loop.stop()
+        elif not self._loop.is_closed and close_loop:
+            self._loop.close()
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
@@ -119,11 +121,14 @@ class AsyncioExecutor(ExecutorBase):
         if handle and handle.when() > time.time():
             handle.cancel()
 
+    def _on_future_done(self, fut: asyncio.Future):
+        self._loop.stop()
+
     def _spin(
         self,
         once: bool = False,
         future: Optional[asyncio.Future] = None,
-        timeout: Optional[int] = None
+        timeout: Optional[float] = None
     ):
         if not self._context.ok():
             return
@@ -133,11 +138,10 @@ class AsyncioExecutor(ExecutorBase):
                 context.enter_context(self._stop_after_callback())
             if timeout:
                 context.enter_context(self._timeout(timeout))
+            if future is not None:
+                future.add_done_callback(self._on_future_done)
 
-            if future:
-                self._loop.run_until_complete(future)
-            else:
-                self._loop.run_forever()
+            self._loop.run_forever()
 
         if not self._context.ok():
             raise ExternalShutdownException()
@@ -150,7 +154,7 @@ class AsyncioExecutor(ExecutorBase):
         """Get the context associated with the executor."""
         return self._context
 
-    def spin_once(self, timeout: Optional[int] = None) -> None:
+    def spin_once(self, timeout: Optional[float] = None) -> None:
         self._spin(once=True, timeout=timeout)
 
     @contextmanager
@@ -165,13 +169,13 @@ class AsyncioExecutor(ExecutorBase):
             self._stop_handle = None
 
     def spin_once_until_future_complete(
-        self, future: asyncio.Future, timeout: Optional[int] = None
+        self, future: asyncio.Future, timeout: Optional[float] = None
     ) -> None: 
         self._spin(once=True, future=future, timeout=timeout)
 
-    # TODO: should this function accept an asyncio Future or a rclpy Future?
+    # TODO: should this function accept an asyncio Future or an rclpy Future?
     def spin_until_future_complete(
-        self, future: asyncio.Future, timeout: Optional[int] = None
+        self, future: asyncio.Future, timeout: Optional[float] = None
     ) -> None:
         self._spin(future=future, timeout=timeout)
 
@@ -246,12 +250,15 @@ class AsyncioExecutor(ExecutorBase):
         self._update_entity_set(
             self._timers,
             timers,
-            lambda s: s.set_on_reset_callback(lambda n: self._update_timers()),
-            lambda s: s.set_on_reset_callback(),
+            lambda s: s.set_on_reset_callback(self._handle_timer_reset),
+            lambda s: s.clear_on_reset_callback(),
         )
 
         if self._timers:
             self._update_timers()
+
+    def _handle_timer_reset(self, number_of_events: int):
+        self._loop.call_soon_threadsafe(self._update_timers)
 
     def _update_entity_set(
         self,
@@ -290,10 +297,10 @@ class AsyncioExecutor(ExecutorBase):
             timer.handle.call_timer()
 
         async def wrapped_callback():
-            # try:
-            await timer.callback()
-            # except Exception:
-            #     get_logger(timer.get_logger_name()).error(traceback.format_exc())
+            try:
+                await timer.callback()
+            except Exception:
+                get_logger(timer.get_logger_name()).error(traceback.format_exc())
 
         task = self._loop.create_task(wrapped_callback())
         self._tasks.add(task)

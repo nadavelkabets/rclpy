@@ -112,7 +112,7 @@ class Timer:
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
         self._logger_name = logger_name
-        self._destroy_callback = weakref.WeakMethod(destroy_callback)
+        self._destroy_callback = weakref.WeakMethod(destroy_callback) if destroy_callback else None
 
     @property
     def handle(self) -> _rclpy.Timer:
