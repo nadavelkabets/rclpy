@@ -183,12 +183,10 @@ class Timer:
             except Exception:
                 traceback.print_exc()
     
-        with self.handle:
-            self.__timer.set_on_reset_callback(safe_callback)
+        self.__timer.set_on_reset_callback(safe_callback)
 
     def clear_on_reset_callback(self) -> None:
-        with self.handle:
-            self.__timer.clear_on_reset_callback()
+        self.__timer.clear_on_reset_callback()
 
 
 class Rate:

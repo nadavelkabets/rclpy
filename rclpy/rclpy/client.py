@@ -262,9 +262,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
                 logger.error(f'Caught exception in on response callback for client: {self.service_name}')
                 logger.error(traceback.format_exc())
     
-        with self.handle:
-            self.__client.set_on_new_response_callback(safe_callback)
+        self.__client.set_on_new_response_callback(safe_callback)
 
     def clear_on_new_response_callback(self) -> None:
-        with self.handle:
-            self.__client.clear_on_new_response_callback()
+        self.__client.clear_on_new_response_callback()

@@ -210,9 +210,9 @@ def test_service_unavailable_after_node_removed(test_node, executor):
 
 def test_spin_returns_if_context_is_not_ok():
     with asyncio_executor() as executor:
-        executor.context.shutdown()
         mock = Mock()
         executor.loop.call_soon(mock)
+        executor.context.shutdown()
         executor.spin()
         mock.assert_not_called()
 
@@ -224,22 +224,27 @@ def test_executor_crashes_if_context_shuts_down_during_spin():
 
 def test_timer_jumps_when_expected(attached_test_node, executor):
     future = executor.create_future()
-    timer = attached_test_node.create_timer(0.5, lambda: future.set_result(None))
+    def _cb():
+        future.set_result(None)
+    attached_test_node.create_timer(0.5, _cb)
     start_time = time.time()
-    executor.spin_until_future_complete(future, timeout=0.6)
+    executor.spin_until_future_complete(future, timeout=0.7)
     assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1) 
 
-# def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
-#     future = executor.create_future()
-#     def _cb():
-#         future.set_result(None)
+def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
+    future = executor.create_future()
+    def _cb():
+        future.set_result(None)
 
-#     timer = attached_test_node.create_timer(0.5, _cb)
-#     start_time = time.time()
-#     executor.spin_until_future_complete(future, timeout=0.3)
-#     assert not future.done()
-#     timer.reset()
-#     executor.spin_until_future_complete(future, timeout=0.3)
-#     assert not future.done()
-#     executor.spin_until_future_complete(future, timeout=0.5)
-#     assert future.done() and math.isclose(time.time() - start_time, 0.8, abs_tol=0.1)
+    timer = attached_test_node.create_timer(0.5, _cb)
+    start_time = time.time()
+    executor.spin_until_future_complete(future, timeout=0.3)
+    assert not future.done()
+    timer.reset()
+    executor.spin_until_future_complete(future, timeout=0.3)
+    assert not future.done()
+    executor.spin_until_future_complete(future, timeout=0.5)
+    assert future.done() and math.isclose(time.time() - start_time, 0.8, abs_tol=0.1)
+
+def test_shutdown_context(attached_test_node, executor):
+    rclpy.shutdown()

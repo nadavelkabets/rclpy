@@ -7,7 +7,6 @@ from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
 
 from rclpy.client import Client
 from rclpy.constants import S_TO_NS
-from rclpy.duration import Duration
 from rclpy.executors import ExecutorBase, ExternalShutdownException, TracebackType, await_or_execute
 from rclpy.logging import get_logger
 from rclpy.node import Node
@@ -107,7 +106,7 @@ class AsyncioExecutor(ExecutorBase):
 
         if self._loop.is_running():
             self._loop.stop()
-        elif not self._loop.is_closed and close_loop:
+        elif not self._loop.is_closed() and close_loop:
             self._loop.close()
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
@@ -254,20 +253,22 @@ class AsyncioExecutor(ExecutorBase):
 
     def _update_entity_set(
         self,
-        current_set: set,
-        new_set: set,
+        current_set: set[EntityT],
+        new_set: set[EntityT],
         added_cb: Callable[[EntityT], None],
         removed_cb: Callable[[EntityT], None],
     ) -> bool:
         added_entities = new_set - current_set
         for e in added_entities:
             current_set.add(e)
+            e.handle.__enter__()
             added_cb(e)
 
         removed_entities = current_set - new_set
         for e in removed_entities:
-            current_set.remove(e)
             removed_cb(e)
+            e.handle.__exit__(None, None, None)
+            current_set.remove(e)
 
         return added_entities or removed_entities
 
