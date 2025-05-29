@@ -76,7 +76,6 @@ class Timer:
         *,
         context: Optional[Context] = None,
         autostart: bool = True,
-        logger_name: Optional[str] = None,
     ) -> None:
         """
         Create a Timer.
@@ -110,7 +109,6 @@ class Timer:
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
-        self._logger_name = logger_name
 
     @property
     def handle(self) -> _rclpy.Timer:
@@ -142,10 +140,7 @@ class Timer:
         with self.__timer:
             self.__timer.change_timer_period(val)
         self.__timer_period_ns = val
-
-    def get_logger_name(self) -> Optional[str]:
-        return self._logger_name
-
+        
     def is_ready(self) -> bool:
         with self.__timer:
             return self.__timer.is_timer_ready()
@@ -182,22 +177,11 @@ class Timer:
         self.destroy()
 
     def set_on_reset_callback(self, callback: Callable[[int], None]) -> None:
-        try:
-            logger = get_logger(self._logger_name)
-        except ValueError:
-            logger = None
-
         def safe_callback(number_of_events: int):
             try:
                 callback(number_of_events)
             except Exception:
-                if logger:
-                    logger.error(f'Caught exception in on reset callback for timer')
-                    logger.error(traceback.format_exc())
-                else:
-                    # TODO: what should we do here? raising in the rcl thread is dangerous
-                    # the Executor also creates a timer and it doesn't have a logger
-                    raise
+                traceback.print_exc()
     
         with self.handle:
             self.__timer.set_on_reset_callback(safe_callback)

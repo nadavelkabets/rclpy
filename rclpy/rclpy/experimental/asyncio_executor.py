@@ -30,11 +30,11 @@ def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) ->
     If destination is cancelled, source gets cancelled too.
     """
 
-    def _call_check_cancel(asyncio_future: asyncio.Future):
+    def _call_check_cancel(_: asyncio.Future):
         if asyncio_future.cancelled():
             rclpy_future.cancel()
 
-    def _call_set_state(rclpy_future: rclpy.Future):
+    def _call_set_state(_: rclpy.Future):
         if asyncio_future.cancelled():
             return
         if rclpy_future.cancelled():
@@ -50,6 +50,8 @@ def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) ->
     asyncio_future.add_done_callback(_call_check_cancel)
     rclpy_future.add_done_callback(_call_set_state)
 
+def _is_timer_destroyed(timer: Timer):
+    return timer.handle.pointer == 0
 
 class AsyncioExecutor(ExecutorBase):
     def __init__(
@@ -72,6 +74,11 @@ class AsyncioExecutor(ExecutorBase):
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
         self._update_timers_handle: Optional[asyncio.Handle] = None
+
+    @property
+    def context(self) -> Context:
+        """Get the context associated with the executor."""
+        return self._context
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
@@ -113,49 +120,11 @@ class AsyncioExecutor(ExecutorBase):
 
     @contextmanager
     def _timeout(self, timeout: int) -> Generator[None, None, None]:
-        handle = None
-        if timeout:
-            handle = self._loop.call_later(timeout, self._loop.stop)
+        handle = self._loop.call_later(timeout, self._loop.stop)
         yield
 
-        if handle and handle.when() > time.time():
+        if handle.when() > time.time():
             handle.cancel()
-
-    def _on_future_done(self, fut: asyncio.Future):
-        self._loop.stop()
-
-    def _spin(
-        self,
-        once: bool = False,
-        future: Optional[asyncio.Future] = None,
-        timeout: Optional[float] = None
-    ):
-        if not self._context.ok():
-            return
-        
-        with ExitStack() as context:
-            if once:
-                context.enter_context(self._stop_after_callback())
-            if timeout:
-                context.enter_context(self._timeout(timeout))
-            if future is not None:
-                future.add_done_callback(self._on_future_done)
-
-            self._loop.run_forever()
-
-        if not self._context.ok():
-            raise ExternalShutdownException()
-
-    def spin(self) -> None:
-        self._spin()
-
-    @property
-    def context(self) -> Context:
-        """Get the context associated with the executor."""
-        return self._context
-
-    def spin_once(self, timeout: Optional[float] = None) -> None:
-        self._spin(once=True, timeout=timeout)
 
     @contextmanager
     def _stop_after_callback(self) -> Generator[None, None, None]:
@@ -168,16 +137,44 @@ class AsyncioExecutor(ExecutorBase):
             self._stop_handle.cancel()
             self._stop_handle = None
 
+    def _on_future_complete(self, _: asyncio.Future):
+        self._loop.stop()
+    
+    def spin(
+        self,
+        once: bool = False,
+        future: Optional[asyncio.Future] = None,
+        timeout: Optional[float] = None
+    ) -> None:
+        if not self._context.ok():
+            return
+        
+        with ExitStack() as context:
+            if once:
+                context.enter_context(self._stop_after_callback())
+            if timeout:
+                context.enter_context(self._timeout(timeout))
+            if future is not None:
+                future.add_done_callback(self._on_future_complete)
+
+            self._loop.run_forever()
+
+        if not self._context.ok():
+            raise ExternalShutdownException()
+
+    def spin_once(self, timeout: Optional[float] = None) -> None:
+        self.spin(once=True, timeout=timeout)
+
     def spin_once_until_future_complete(
         self, future: asyncio.Future, timeout: Optional[float] = None
     ) -> None: 
-        self._spin(once=True, future=future, timeout=timeout)
+        self.spin(once=True, future=future, timeout=timeout)
 
     # TODO: should this function accept an asyncio Future or an rclpy Future?
     def spin_until_future_complete(
         self, future: asyncio.Future, timeout: Optional[float] = None
     ) -> None:
-        self._spin(future=future, timeout=timeout)
+        self.spin(future=future, timeout=timeout)
 
     def create_task(
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
@@ -186,9 +183,6 @@ class AsyncioExecutor(ExecutorBase):
             callback = await_or_execute(callback, *args, **kwargs)
 
         return self._loop.create_task(callback)
-
-    def call_soon(self, callback: Callable, *args: Any, **kwargs: Any) -> asyncio.Handle:
-        return self._loop.call_soon(callback, *args, **kwargs)
 
     def wake(self) -> None:        
         self._update_entities_from_nodes()
@@ -209,15 +203,15 @@ class AsyncioExecutor(ExecutorBase):
         self._nodes.remove(node)
         self._update_entities_from_nodes()
 
-    def create_future(self) -> asyncio.Future:
-        return self._loop.create_future()
-
-    def wrap_future(self, rclpy_future: rclpy.Future) -> asyncio.Future:
+    def create_future(self, *, from_future: Optional[rclpy.Future] = None) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
-        _chain_future(rclpy_future, asyncio_future)
+        
+        if from_future:
+            _chain_future(from_future, asyncio_future)
+        
         return asyncio_future
 
-    # TODO: should optimize this function to run less times?
+    # TODO: optimize this function to run less times?
     def _update_entities_from_nodes(self) -> None:
         subscriptions, clients, services, timers = set(), set(), set(), set()
         for node in self._nodes:
@@ -247,17 +241,15 @@ class AsyncioExecutor(ExecutorBase):
             lambda s: s.clear_on_new_request_callback(),
         )
 
-        self._update_entity_set(
+        if self._update_entity_set(
             self._timers,
             timers,
             lambda s: s.set_on_reset_callback(self._handle_timer_reset),
             lambda s: s.clear_on_reset_callback(),
-        )
-
-        if self._timers:
+        ):
             self._update_timers()
 
-    def _handle_timer_reset(self, number_of_events: int):
+    def _handle_timer_reset(self, _: int):
         self._loop.call_soon_threadsafe(self._update_timers)
 
     def _update_entity_set(
@@ -266,16 +258,18 @@ class AsyncioExecutor(ExecutorBase):
         new_set: set,
         added_cb: Callable[[EntityT], None],
         removed_cb: Callable[[EntityT], None],
-    ) -> None:
-        # Handle additions
-        for h in new_set - current_set:
-            current_set.add(h)
-            added_cb(h)
+    ) -> bool:
+        added_entities = new_set - current_set
+        for e in added_entities:
+            current_set.add(e)
+            added_cb(e)
 
-        # Handle removals
-        for h in current_set - new_set:
-            current_set.remove(h)
-            removed_cb(h)
+        removed_entities = current_set - new_set
+        for e in removed_entities:
+            current_set.remove(e)
+            removed_cb(e)
+
+        return added_entities or removed_entities
 
     def _handle_ready_subscription(self, subscription: Subscription, number_of_events: int) -> None:
         self._loop.call_soon_threadsafe(
@@ -292,30 +286,21 @@ class AsyncioExecutor(ExecutorBase):
             self._handle_ready_entity, self._take_service, service, number_of_events
         )
 
-    def _execute_ready_timer(self, timer: Timer):
-        with timer.handle:
-            timer.handle.call_timer()
-
-        def wrapped_callback():
-            try:
-                timer.callback()
-            except Exception:
-                logger_name = timer.get_logger_name()
-                if not logger_name:
-                    raise
-
-                get_logger(logger_name).error(traceback.format_exc())
-
-        self._loop.call_soon(wrapped_callback)
-
     def _update_timers(self):
         if self._update_timers_handle and not self._update_timers_handle.cancelled():
             self._update_timers_handle.cancel()
         
+        timers = list(self._timers)
         next_jump_time_seconds = None
-        for timer in self._timers:
+        for timer in timers:
+            if _is_timer_destroyed(timer) or timer.is_canceled():
+                continue
+
             if timer.is_ready():
-                self._execute_ready_timer(timer)
+                with timer.handle:
+                    timer.handle.call_timer()
+                
+                self._loop.call_soon(timer.callback)
             
             timer_next_jump_time = timer.time_until_next_call() / S_TO_NS
             if next_jump_time_seconds is None:

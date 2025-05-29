@@ -42,7 +42,8 @@ def asyncio_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     yield loop
-    loop.close()
+    if not loop.is_closed():
+        loop.close()
 
 
 @pytest.fixture
@@ -76,10 +77,10 @@ def test_wrapped_future_is_done_when_future_is_done(executor):
     ros_fut = Future()
 
     async def test_coro():
-        return await executor.wrap_future(ros_fut)
+        return await executor.create_future(from_future=ros_fut)
 
     task = executor.create_task(test_coro())
-    executor.call_soon(ros_fut.set_result, "finished")
+    executor.loop.call_soon(ros_fut.set_result, "finished")
 
     executor.spin_until_future_complete(task, timeout=0.3)
     assert task.result() == "finished"
@@ -89,10 +90,10 @@ def test_wrapped_future_is_cancelled_when_future_is_cancelled(executor):
     ros_fut = Future()
 
     async def test_coro():
-        return await executor.wrap_future(ros_fut)
+        return await executor.create_future(from_future=ros_fut)
 
     task = executor.create_task(test_coro())
-    executor.call_soon(ros_fut.cancel)
+    executor.loop.call_soon(ros_fut.cancel)
     executor.spin_until_future_complete(task, timeout=0.3)
     assert task.cancelled()
 
@@ -162,7 +163,7 @@ def test_basic_service_call(executor, attached_test_node):
     attached_test_node.create_service(BasicTypes, '/test_srv', cb)
     client = attached_test_node.create_client(BasicTypes, '/test_srv')
     fut = client.call_async(BasicTypes.Request(bool_value=True))
-    executor.spin_until_future_complete(executor.wrap_future(fut), timeout=0.3)
+    executor.spin_until_future_complete(executor.create_future(from_future=fut), timeout=0.3)
     assert fut.result().string_value == "True"
 
 
@@ -200,7 +201,7 @@ def test_service_unavailable_after_node_removed(test_node, executor):
     with attach_to_executor(test_node, executor):
         req = BasicTypes.Request()
         fut = client.call_async(req)
-        executor.spin_until_future_complete(executor.wrap_future(fut), timeout=0.3)
+        executor.spin_until_future_complete(executor.create_future(from_future=fut), timeout=0.3)
         assert fut.result().bool_value is True
 
     fut2 = client.call_async(BasicTypes.Request())
@@ -211,13 +212,13 @@ def test_spin_returns_if_context_is_not_ok():
     with asyncio_executor() as executor:
         executor.context.shutdown()
         mock = Mock()
-        executor.call_soon(mock)
+        executor.loop.call_soon(mock)
         executor.spin()
         mock.assert_not_called()
 
 def test_executor_crashes_if_context_shuts_down_during_spin():
     with asyncio_executor() as executor:
-        executor.call_soon(executor.context.shutdown)
+        executor.loop.call_soon(executor.context.shutdown)
         with pytest.raises(ExternalShutdownException):
             executor.spin()
 
@@ -230,7 +231,10 @@ def test_timer_jumps_when_expected(attached_test_node, executor):
 
 # def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
 #     future = executor.create_future()
-#     timer = attached_test_node.create_timer(0.5, lambda: future.set_result(None))
+#     def _cb():
+#         future.set_result(None)
+
+#     timer = attached_test_node.create_timer(0.5, _cb)
 #     start_time = time.time()
 #     executor.spin_until_future_complete(future, timeout=0.3)
 #     assert not future.done()
