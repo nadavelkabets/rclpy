@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from functools import partial
@@ -45,6 +44,7 @@ from rclpy.clock import Clock
 from rclpy.clock_type import ClockType
 from rclpy.context import Context
 from rclpy.exceptions import InvalidHandle
+from rclpy.events import set_executor
 from rclpy.guard_condition import GuardCondition
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.service import Service
@@ -275,7 +275,9 @@ class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
                     # The request was cancelled
                     pass
                 else:
-                    future._set_executor(self)
+                    if not future._executor():
+                        future._set_executor(self)
+                    
                     future.set_result(response)
             return _execute
 
@@ -361,6 +363,7 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         self._sigint_gc: Optional[SignalHandlerGuardCondition] = \
             SignalHandlerGuardCondition(context)
         self._context.on_shutdown(self.wake)
+        set_executor(self)
 
     @property
     def context(self) -> Context:
@@ -429,6 +432,7 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         self._cb_iter = None
         self._last_args = None
         self._last_kwargs = None
+        set_executor(None)
         return True
 
     def __del__(self) -> None:

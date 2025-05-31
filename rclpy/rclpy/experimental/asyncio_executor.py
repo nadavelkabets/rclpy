@@ -8,6 +8,7 @@ from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
 from rclpy.client import Client
 from rclpy.constants import S_TO_NS
 from rclpy.executors import BaseExecutor, ExternalShutdownException, TracebackType, await_or_execute
+from rclpy.events import set_executor
 from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
@@ -74,6 +75,8 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._stop_handle: Optional[asyncio.Handle] = None
         self._update_timers_handle: Optional[asyncio.Handle] = None
 
+        set_executor(self)
+
     @property
     def context(self) -> Context:
         """Get the context associated with the executor."""
@@ -108,6 +111,8 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             self._loop.stop()
         elif not self._loop.is_closed() and close_loop:
             self._loop.close()
+
+        set_executor(None)
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:

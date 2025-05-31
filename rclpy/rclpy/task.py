@@ -56,8 +56,8 @@ class Future(Generic[T]):
         # Lock for threadsafety
         self._lock = threading.Lock()
         # An executor to use when scheduling done callbacks
-        self._executor: Optional[Union[weakref.ReferenceType['Executor'],
-                                       Callable[[], None]]] = None
+        self._executor: Union[weakref.ReferenceType['Executor'],
+                                       Callable[[], None]]
         self._set_executor(executor)
 
     def __del__(self) -> None:
@@ -156,7 +156,6 @@ class Future(Generic[T]):
         This function assumes self._lock is not held.
         """
         with self._lock:
-            assert self._executor is not None
             executor = self._executor()
             callbacks = self._callbacks
             self._callbacks = []
@@ -196,7 +195,6 @@ class Future(Generic[T]):
         invoke = False
         with self._lock:
             if not self._pending():
-                assert self._executor is not None
                 executor = self._executor()
                 if executor is not None:
                     executor.create_task(callback, self)

@@ -27,6 +27,7 @@ import traceback
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
 from rclpy.context import Context
+from rclpy.events import get_executor
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
@@ -140,7 +141,12 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             if sequence_number in self._pending_requests:
                 raise RuntimeError(f'Sequence ({sequence_number}) conflicts with pending request')
 
-            future = Future[SrvResponseT]()
+            executor = get_executor()
+            if executor:
+                future = executor.create_future()
+            else:
+                future = Future[SrvResponseT]()
+                
             self._pending_requests[sequence_number] = future
 
             future.add_done_callback(self.remove_pending_request)
