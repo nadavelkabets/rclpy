@@ -73,31 +73,6 @@ def test_rclpy_future_crashes_asyncio_task():
         asyncio.run(test_coro())
 
 
-def test_wrapped_future_is_done_when_future_is_done(executor):
-    ros_fut = Future()
-
-    async def test_coro():
-        return await executor.create_future(from_future=ros_fut)
-
-    task = executor.create_task(test_coro())
-    executor.loop.call_soon(ros_fut.set_result, "finished")
-
-    executor.spin_until_future_complete(task, timeout=0.3)
-    assert task.result() == "finished"
-
-
-def test_wrapped_future_is_cancelled_when_future_is_cancelled(executor):
-    ros_fut = Future()
-
-    async def test_coro():
-        return await executor.create_future(from_future=ros_fut)
-
-    task = executor.create_task(test_coro())
-    executor.loop.call_soon(ros_fut.cancel)
-    executor.spin_until_future_complete(task, timeout=0.3)
-    assert task.cancelled()
-
-
 def test_spin_once_returns_after_callback(executor, attached_test_node):
     mock = Mock()
     msg = String(data="test")
@@ -163,7 +138,7 @@ def test_basic_service_call(executor, attached_test_node):
     attached_test_node.create_service(BasicTypes, '/test_srv', cb)
     client = attached_test_node.create_client(BasicTypes, '/test_srv')
     fut = client.call_async(BasicTypes.Request(bool_value=True))
-    executor.spin_until_future_complete(executor.create_future(from_future=fut), timeout=0.3)
+    executor.spin_until_future_complete(fut, timeout=0.3)
     assert fut.result().string_value == "True"
 
 
@@ -201,7 +176,7 @@ def test_service_unavailable_after_node_removed(test_node, executor):
     with attach_to_executor(test_node, executor):
         req = BasicTypes.Request()
         fut = client.call_async(req)
-        executor.spin_until_future_complete(executor.create_future(from_future=fut), timeout=0.3)
+        executor.spin_until_future_complete(fut, timeout=0.3)
         assert fut.result().bool_value is True
 
     fut2 = client.call_async(BasicTypes.Request())

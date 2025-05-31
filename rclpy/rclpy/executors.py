@@ -275,7 +275,7 @@ class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
                     # The request was cancelled
                     pass
                 else:
-                    if not future._executor():
+                    if isinstance(future, Future) and not future._executor():
                         future._set_executor(self)
                     
                     future.set_result(response)

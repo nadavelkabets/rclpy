@@ -23,35 +23,9 @@ import traceback
 EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client, Timer])
 
 
-def _chain_future(rclpy_future: rclpy.Future, asyncio_future: asyncio.Future) -> None:
-    """Chain two futures so that when one completes, so does the other.
-
-    The result (or exception) of source will be copied to destination.
-    If destination is cancelled, source gets cancelled too.
-    """
-
-    def _call_check_cancel(_: asyncio.Future):
-        if asyncio_future.cancelled():
-            rclpy_future.cancel()
-
-    def _call_set_state(_: rclpy.Future):
-        if asyncio_future.cancelled():
-            return
-        if rclpy_future.cancelled():
-            asyncio_future.cancel()
-        else:
-            exception = rclpy_future.exception()
-            if exception is not None:
-                asyncio_future.set_exception(exception)
-            else:
-                result = rclpy_future.result()
-                asyncio_future.set_result(result)
-
-    asyncio_future.add_done_callback(_call_check_cancel)
-    rclpy_future.add_done_callback(_call_set_state)
-
 def _is_timer_destroyed(timer: Timer):
     return timer.handle.pointer == 0
+
 
 class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def __init__(
@@ -207,11 +181,8 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._nodes.remove(node)
         self._update_entities_from_nodes()
 
-    def create_future(self, *, from_future: Optional[rclpy.Future] = None) -> asyncio.Future:
+    def create_future(self) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
-        
-        if from_future:
-            _chain_future(from_future, asyncio_future)
         
         return asyncio_future
 
