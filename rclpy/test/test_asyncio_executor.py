@@ -88,7 +88,7 @@ def test_spin_once_returns_after_callback(executor, attached_test_node):
 
 def test_spin_once_returns_after_timeout(executor):
     start_time = time.time()
-    executor.spin_once(timeout=0.5)
+    executor.spin_once(timeout_sec=0.5)
     assert math.isclose(time.time() - start_time, 0.5, abs_tol=0.01)
 
 
@@ -111,10 +111,10 @@ def test_executor_discards_subscription_from_removed_node(test_node, executor):
     pub = test_node.create_publisher(String, "/test", 10)
 
     with attach_to_executor(test_node, executor):
-        executor.spin_once(timeout=0.01)
+        executor.spin_once(timeout_sec=0.01)
 
     pub.publish(msg)
-    executor.spin_once(timeout=0.01)
+    executor.spin_once(timeout_sec=0.01)
 
     mock.assert_not_called()
 
@@ -138,7 +138,7 @@ def test_basic_service_call(executor, attached_test_node):
     attached_test_node.create_service(BasicTypes, '/test_srv', cb)
     client = attached_test_node.create_client(BasicTypes, '/test_srv')
     fut = client.call_async(BasicTypes.Request(bool_value=True))
-    executor.spin_until_future_complete(fut, timeout=0.3)
+    executor.spin_until_future_complete(fut, timeout_sec=0.3)
     assert fut.result().string_value == "True"
 
 
@@ -160,7 +160,7 @@ def test_transient_local_subscriber_receives_queued_messages(test_node, executor
     test_node.create_subscription(String, "/test", callback, qos)
 
     with attach_to_executor(test_node, executor):
-        executor.spin_until_future_complete(fut, timeout=0.5)
+        executor.spin_until_future_complete(fut, timeout_sec=0.5)
     
     assert fut.done()
 
@@ -176,11 +176,11 @@ def test_service_unavailable_after_node_removed(test_node, executor):
     with attach_to_executor(test_node, executor):
         req = BasicTypes.Request()
         fut = client.call_async(req)
-        executor.spin_until_future_complete(fut, timeout=0.3)
+        executor.spin_until_future_complete(fut, timeout_sec=0.3)
         assert fut.result().bool_value is True
 
     fut2 = client.call_async(BasicTypes.Request())
-    executor.spin_once(timeout=0.1)
+    executor.spin_once(timeout_sec=0.1)
     assert not fut2.done()
 
 def test_spin_returns_if_context_is_not_ok():
@@ -203,7 +203,7 @@ def test_timer_jumps_when_expected(attached_test_node, executor):
         future.set_result(None)
     attached_test_node.create_timer(0.5, _cb)
     start_time = time.time()
-    executor.spin_until_future_complete(future, timeout=0.7)
+    executor.spin_until_future_complete(future, timeout_sec=0.7)
     assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1) 
 
 def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
@@ -213,12 +213,12 @@ def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
 
     timer = attached_test_node.create_timer(0.5, _cb)
     start_time = time.time()
-    executor.spin_until_future_complete(future, timeout=0.3)
+    executor.spin_until_future_complete(future, timeout_sec=0.3)
     assert not future.done()
     timer.reset()
-    executor.spin_until_future_complete(future, timeout=0.3)
+    executor.spin_until_future_complete(future, timeout_sec=0.3)
     assert not future.done()
-    executor.spin_until_future_complete(future, timeout=0.5)
+    executor.spin_until_future_complete(future, timeout_sec=0.5)
     assert future.done() and math.isclose(time.time() - start_time, 0.8, abs_tol=0.1)
 
 def test_shutdown_context(attached_test_node, executor):

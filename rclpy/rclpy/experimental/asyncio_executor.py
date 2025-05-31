@@ -2,7 +2,7 @@ import asyncio
 import time
 from contextlib import ExitStack, contextmanager
 from functools import partial
-from typing import (Any, Callable, Coroutine, Generator, Optional, Set, Type,
+from typing import (Any, Callable, Coroutine, Generator, List, Optional, Set, Type,
                     TypeVar, Union)
 
 from rclpy.client import Client
@@ -50,6 +50,10 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._update_timers_handle: Optional[asyncio.Handle] = None
 
         set_executor(self)
+
+    def get_nodes(self) -> List['Node']:
+        """Return nodes that have been added to this executor."""
+        return list(self._nodes)
 
     @property
     def context(self) -> Context:
@@ -130,7 +134,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         with ExitStack() as context:
             if once:
                 context.enter_context(self._stop_after_callback())
-            if timeout:
+            if timeout is not None:
                 context.enter_context(self._timeout(timeout))
             if future is not None:
                 future.add_done_callback(self._on_future_complete)
@@ -140,19 +144,19 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         if not self._context.ok():
             raise ExternalShutdownException()
 
-    def spin_once(self, timeout: Optional[float] = None) -> None:
-        self.spin(once=True, timeout=timeout)
+    def spin_once(self, timeout_sec: Optional[float] = None) -> None:
+        self.spin(once=True, timeout=timeout_sec)
 
     def spin_once_until_future_complete(
-        self, future: asyncio.Future, timeout: Optional[float] = None
+        self, future: asyncio.Future, timeout_sec: Optional[float] = None
     ) -> None: 
-        self.spin(once=True, future=future, timeout=timeout)
+        self.spin(once=True, future=future, timeout=timeout_sec)
 
     # TODO: should this function accept an asyncio Future or an rclpy Future?
     def spin_until_future_complete(
-        self, future: asyncio.Future, timeout: Optional[float] = None
+        self, future: asyncio.Future, timeout_sec: Optional[float] = None
     ) -> None:
-        self.spin(future=future, timeout=timeout)
+        self.spin(future=future, timeout=timeout_sec)
 
     def create_task(
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any

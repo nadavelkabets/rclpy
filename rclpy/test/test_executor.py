@@ -25,7 +25,7 @@ from rclpy.executors import Executor
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.executors import ShutdownException
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.experimental import EventsExecutor
+from rclpy.experimental import EventsExecutor, AsyncioExecutor
 from rclpy.task import Future
 from test_msgs.srv import Empty
 
@@ -62,7 +62,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_single_threaded_executor_executes(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 try:
@@ -71,6 +71,7 @@ class TestExecutor(unittest.TestCase):
                     executor.shutdown()
 
     def test_executor_immediate_shutdown(self) -> None:
+        # AsyncioExecutor is not thread safe
         self.assertIsNotNone(self.node.handle)
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
@@ -101,7 +102,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_shutdown_executor_before_waiting_for_callbacks(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # EventsExecutor does not support the wait_for_ready_callbacks() API
+        # EventsExecutor and AsyncioExecutor do not support the wait_for_ready_callbacks() API
         for cls in [SingleThreadedExecutor, MultiThreadedExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -111,7 +112,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_shutdown_exception_from_callback_generator(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # This test touches the Executor private API and is not compatible with EventsExecutor
+        # This test touches the Executor private API and is not compatible with EventsExecutor and AsyncioExecutor
         for cls in [SingleThreadedExecutor, MultiThreadedExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -122,7 +123,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_remove_node(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
 
@@ -199,7 +200,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_add_node_to_executor(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -207,7 +208,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_spin_non_blocking(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -218,6 +219,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_execute_coroutine_timer(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor does not support coroutine as a timer callback
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -280,7 +282,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_coroutine(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -297,6 +299,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_coroutine_cancel(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor fail since asyncio task is considered done when cancelled
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -319,7 +322,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_normal_function(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -336,6 +339,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_fifo_order(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # The AsyncioExecutor event loop will execute both tasks in one spin_once()
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -364,6 +368,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_dependent_coroutines(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor fails since it will finish both tasks in two spin_once iterations
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -396,6 +401,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_during_spin(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # The AsyncioExecutor is not thread safe
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -447,6 +453,7 @@ class TestExecutor(unittest.TestCase):
                     yield
                 return
 
+        # AsyncioExecutor does not support coroutines as timer callbacks
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 trigger = TriggerAwait()
@@ -472,7 +479,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_add_node(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 assert executor.add_node(self.node)
@@ -482,7 +489,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_spin_until_future_complete_timeout(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -506,6 +513,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_spin_until_future_complete_future_done(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor is not thread safe
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -549,7 +557,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_spin_until_future_complete_do_not_wait(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -568,6 +576,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_executor_add_node_wakes_executor(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor is not thread safe
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 got_callback = False
@@ -638,6 +647,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_single_threaded_spin_once_until_future(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor is not thread safe
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -696,6 +706,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_not_lose_callback(self) -> None:
         self.assertIsNotNone(self.node.handle)
+        # AsyncioExecutor does not support coroutines in timer callbacks
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
