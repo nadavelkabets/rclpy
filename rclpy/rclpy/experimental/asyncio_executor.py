@@ -39,28 +39,31 @@ EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
 class TimerHandler:
-    def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop):
+    def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop) -> None:
         self._timer = timer
         self._loop = loop
 
         self._call_later_handle: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
 
+        if self._is_finished():
+            return
+
         self._register_jump_handle()
         if not self._ros_time_is_active():
             self._schedule_next_call()
 
-    def on_remove(self):
+    def on_remove(self) -> None:
         self._cancel_call_later()
         self._unregister_jump_handle()
 
-    def on_reset(self, _: int = None):
+    def on_reset(self, _: int = None) -> None:
         self._cancel_call_later()
         self._register_jump_handle()
         if not self._ros_time_is_active():
             self._schedule_next_call()
 
-    def _cancel_call_later(self):
+    def _cancel_call_later(self) -> None:
         if self._call_later_handle:
             self._call_later_handle.cancel()
             self._call_later_handle = None
@@ -68,7 +71,7 @@ class TimerHandler:
     def _ros_time_is_active(self) -> bool:
         return isinstance(self._timer.clock, ROSClock) and self._timer.clock.ros_time_is_active
 
-    def _register_jump_handle(self):
+    def _register_jump_handle(self) -> None:
         if not self._jump_handle:
             threshold = JumpThreshold(min_forward=Duration(nanoseconds=1), min_backward=None)
             self._jump_handle = self._timer.clock.create_jump_callback(
@@ -76,12 +79,12 @@ class TimerHandler:
                 post_callback=self._on_time_jump
             )
 
-    def _unregister_jump_handle(self):
+    def _unregister_jump_handle(self) -> None:
         if self._jump_handle:
             self._jump_handle.unregister()
             self._jump_handle = None
 
-    def _on_time_jump(self, jump: TimeJump):
+    def _on_time_jump(self, jump: TimeJump) -> None:
         if self._is_finished():
             return
 
@@ -92,7 +95,7 @@ class TimerHandler:
         else:
             self._call_if_ready()
 
-    def _loop_callback(self):
+    def _loop_callback(self) -> None:
         if self._is_finished():
             return
 
@@ -107,7 +110,7 @@ class TimerHandler:
 
         return False
 
-    def _schedule_next_call(self):
+    def _schedule_next_call(self) -> None:
         self._call_later_handle = self._loop.call_later(
             self._time_until_next_call_sec(),
             self._loop_callback
@@ -129,7 +132,7 @@ class TimerHandler:
     def _time_until_next_call_sec(self):
         return self._timer.time_until_next_call() / S_TO_NS 
 
-    def _is_timer_destroyed(self):
+    def _is_timer_destroyed(self) -> bool:
         return self._timer.handle.pointer == 0
 
 

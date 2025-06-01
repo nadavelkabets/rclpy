@@ -219,7 +219,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_execute_coroutine_timer(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # AsyncioExecutor does not support coroutine as a timer callback
+        # AsyncioExecutor spin_once behavior is not compatible with this test
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -453,8 +453,7 @@ class TestExecutor(unittest.TestCase):
                     yield
                 return
 
-        # AsyncioExecutor does not support coroutines as timer callbacks
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 trigger = TriggerAwait()
                 did_callback = False
@@ -706,8 +705,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_not_lose_callback(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # AsyncioExecutor does not support coroutines in timer callbacks
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
 
