@@ -15,7 +15,6 @@
 #include "events_executor/rcl_support.hpp"
 
 #include <utility>
-#include <iostream>
 
 namespace py = pybind11;
 

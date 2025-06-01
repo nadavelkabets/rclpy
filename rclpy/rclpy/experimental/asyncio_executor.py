@@ -17,12 +17,14 @@ from contextlib import contextmanager, ExitStack
 from functools import partial
 import time
 import traceback
-from typing import (Any, Callable, Coroutine, Generator, List, Optional, Set,
+from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
                     Type, TypeVar, Union)
 
 from rclpy.client import Client
+from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, ROSClock, TimeJump
 from rclpy.constants import S_TO_NS
 from rclpy.context import Context
+from rclpy.duration import Duration
 from rclpy.events import set_executor
 from rclpy.executors import (await_or_execute, BaseExecutor, ExternalShutdownException,
                              TracebackType)
@@ -36,8 +38,93 @@ from rclpy.utilities import get_default_context
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
-def _is_timer_destroyed(timer: Timer):
-    return timer.handle.pointer == 0
+class TimerHandler:
+    def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop):
+        self._timer = timer
+        self._loop = loop
+
+        self._call_later_handle: Optional[asyncio.TimerHandle] = None
+        self._jump_handle: Optional[JumpHandle] = None
+
+        self._register_jump_handle()
+        if not self._ros_time_is_active():
+            self._schedule_next_call()
+
+    def on_remove(self):
+        self._cancel_call_later()
+        self._unregister_jump_handle()
+
+    def on_reset(self, _: int = None):
+        self._cancel_call_later()
+        self._register_jump_handle()
+        if not self._ros_time_is_active():
+            self._schedule_next_call()
+
+    def _cancel_call_later(self):
+        if self._call_later_handle:
+            self._call_later_handle.cancel()
+            self._call_later_handle = None
+
+    def _ros_time_is_active(self) -> bool:
+        return isinstance(self._timer.clock, ROSClock) and self._timer.clock.ros_time_is_active
+
+    def _register_jump_handle(self):
+        if not self._jump_handle:
+            threshold = JumpThreshold(min_forward=Duration(nanoseconds=1), min_backward=None)
+            self._jump_handle = self._timer.clock.create_jump_callback(
+                threshold,
+                post_callback=self._on_time_jump
+            )
+
+    def _unregister_jump_handle(self):
+        if self._jump_handle:
+            self._jump_handle.unregister()
+            self._jump_handle = None
+
+    def _on_time_jump(self, jump: TimeJump):
+        if self._is_finished():
+            return
+
+        if jump.clock_change == ClockChange.ROS_TIME_ACTIVATED:
+            self._cancel_call_later()
+        elif jump.clock_change == ClockChange.ROS_TIME_DEACTIVATED:
+            self._schedule_next_call()
+        else:
+            self._call_if_ready()
+
+    def _loop_callback(self):
+        if self._is_finished():
+            return
+
+        self._call_if_ready()
+        self._schedule_next_call()
+
+    def _is_finished(self) -> bool:
+        if self._is_timer_destroyed() or self._timer.is_canceled():
+            self._cancel_call_later()
+            self._unregister_jump_handle()
+            return True
+
+        return False
+
+    def _schedule_next_call(self):
+        self._call_later_handle = self._loop.call_later(
+            self._time_until_next_call_sec(),
+            self._loop_callback
+        )
+
+    def _call_if_ready(self) -> float:
+        if self._timer.is_ready():
+            with self._timer.handle:
+                self._timer.handle.call_timer()
+
+            self._loop.call_soon(self._timer.callback)
+
+    def _time_until_next_call_sec(self):
+        return self._timer.time_until_next_call() / S_TO_NS 
+
+    def _is_timer_destroyed(self):
+        return self._timer.handle.pointer == 0
 
 
 class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
@@ -56,6 +143,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._clients: Set[Client] = set()
         self._services: Set[Service] = set()
         self._timers: Set[Timer] = set()
+        self._timer_handlers: Dict[Timer, TimerHandler] = {}
 
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
@@ -230,16 +318,22 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             lambda s: s.clear_on_new_request_callback(),
         )
 
-        if self._update_entity_set(
+        self._update_entity_set(
             self._timers,
             timers,
-            lambda s: s.set_on_reset_callback(self._handle_timer_reset),
-            lambda s: s.clear_on_reset_callback(),
-        ):
-            self._update_timers()
+            self._handle_added_timer,
+            self._handle_removed_timer,
+        )
 
-    def _handle_timer_reset(self, _: int):
-        self._loop.call_soon_threadsafe(self._update_timers)
+    def _handle_added_timer(self, timer: Timer):
+        handler = TimerHandler(timer, self._loop)
+        self._timer_handlers[timer] = handler
+        timer.set_on_reset_callback(handler.on_reset)
+
+    def _handle_removed_timer(self, timer: Timer):
+        timer.clear_on_reset_callback()
+        self._timer_handlers[timer].on_remove()
+        del self._timer_handlers[timer]
 
     def _update_entity_set(
         self,
@@ -280,33 +374,6 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._loop.call_soon_threadsafe(
             self._handle_ready_entity, self._take_service, service, number_of_events
         )
-
-    def _update_timers(self):
-        if self._update_timers_handle and not self._update_timers_handle.cancelled():
-            self._update_timers_handle.cancel()
-
-        timers = list(self._timers)
-        next_jump_time_seconds = None
-        for timer in timers:
-            if _is_timer_destroyed(timer) or timer.is_canceled():
-                continue
-
-            if timer.is_ready():
-                with timer.handle:
-                    timer.handle.call_timer()
-
-                self._loop.call_soon(timer.callback)
-
-            timer_next_jump_time = timer.time_until_next_call() / S_TO_NS
-            if next_jump_time_seconds is None:
-                next_jump_time_seconds = timer_next_jump_time
-            else:
-                next_jump_time_seconds = min(next_jump_time_seconds, timer_next_jump_time)
-
-        if next_jump_time_seconds and not self._loop.is_closed():
-            self._update_timers_handle = self._loop.call_later(
-                next_jump_time_seconds, self._update_timers
-            )
 
     def _handle_ready_entity(
         self,
