@@ -90,9 +90,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self.shutdown()
 
     def shutdown(self, close_loop: bool = True) -> None:
-        """
-        Clear all nodes and close the event loop.
-        """
+        """Clear all nodes and close the event loop."""
         self._nodes.clear()
         self._update_entities_from_nodes()
 
