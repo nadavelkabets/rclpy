@@ -43,6 +43,7 @@ class TimerHandler:
         self._timer = timer
         self._loop = loop
 
+        self._tasks: Set[asyncio.Task] = set()
         self._call_later_handle: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
 
@@ -56,6 +57,8 @@ class TimerHandler:
     def on_remove(self) -> None:
         self._cancel_call_later()
         self._unregister_jump_handle()
+        for task in self._tasks:
+            task.cancel()
 
     def on_reset(self, _: int = None) -> None:
         self._cancel_call_later()
@@ -127,7 +130,9 @@ class TimerHandler:
                 except Exception:
                     traceback.print_exc()
 
-            self._loop.create_task(callback())
+            task = self._loop.create_task(callback())
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.remove)
 
     def _time_until_next_call_sec(self):
         return self._timer.time_until_next_call() / S_TO_NS 
