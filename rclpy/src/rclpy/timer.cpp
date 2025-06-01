@@ -26,7 +26,8 @@
 #include "timer.hpp"
 #include "events_executor/rcl_support.hpp"
 
-namespace rclpy {
+namespace rclpy
+{
 using events_executor::RclEventCallbackTrampoline;
 
 void
@@ -201,9 +202,9 @@ Timer::set_on_reset_callback(std::function<void(size_t)> callback)
 void
 Timer::clear_on_reset_callback()
 {
-    if (on_reset_callback_) {
-      set_callback(nullptr, nullptr);
-      on_reset_callback_ = nullptr;
+  if (on_reset_callback_) {
+    set_callback(nullptr, nullptr);
+    on_reset_callback_ = nullptr;
   }
 }
 
@@ -246,7 +247,7 @@ define_timer(py::object module)
     "is_timer_canceled", &Timer::is_timer_canceled,
     "Check if a timer is canceled.")
   .def("set_on_reset_callback", &Timer::set_on_reset_callback)
-  .def("clear_on_reset_callback", &Timer::clear_on_reset_callback);;
+  .def("clear_on_reset_callback", &Timer::clear_on_reset_callback);
 }
 
 }  // namespace rclpy

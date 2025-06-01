@@ -111,6 +111,7 @@ public:
 
   void
   clear_on_new_message_callback();
+
 private:
   Node node_;
   std::function<void(size_t)> on_new_message_callback_{nullptr};

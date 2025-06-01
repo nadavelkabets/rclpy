@@ -30,7 +30,8 @@
 #include "utils.hpp"
 #include "events_executor/rcl_support.hpp"
 
-namespace rclpy {
+namespace rclpy
+{
 using events_executor::RclEventCallbackTrampoline;
 
 void
@@ -214,9 +215,9 @@ Service::set_on_new_request_callback(std::function<void(size_t)> callback)
 void
 Service::clear_on_new_request_callback()
 {
-    if (on_new_request_callback_) {
-      set_callback(nullptr, nullptr);
-      on_new_request_callback_ = nullptr;
+  if (on_new_request_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_request_callback_ = nullptr;
   }
 }
 

@@ -32,7 +32,8 @@
 #include "utils.hpp"
 #include "events_executor/rcl_support.hpp"
 
-namespace rclpy {
+namespace rclpy
+{
 using events_executor::RclEventCallbackTrampoline;
 
 void
@@ -211,9 +212,9 @@ Client::set_on_new_response_callback(std::function<void(size_t)> callback)
 void
 Client::clear_on_new_response_callback()
 {
-    if (on_new_response_callback_) {
-      set_callback(nullptr, nullptr);
-      on_new_response_callback_ = nullptr;
+  if (on_new_response_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_response_callback_ = nullptr;
   }
 }
 
@@ -246,6 +247,6 @@ define_client(py::object module)
     "configure_introspection", &Client::configure_introspection,
     "Configure whether introspection is enabled")
   .def("set_on_new_response_callback", &Client::set_on_new_response_callback)
-  .def("clear_on_new_response_callback", &Client::clear_on_new_response_callback);;
+  .def("clear_on_new_response_callback", &Client::clear_on_new_response_callback);
 }
 }  // namespace rclpy

@@ -34,7 +34,8 @@
 
 using pybind11::literals::operator""_a;
 
-namespace rclpy {
+namespace rclpy
+{
 using events_executor::RclEventCallbackTrampoline;
 
 Subscription::Subscription(
@@ -211,9 +212,9 @@ Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
 void
 Subscription::clear_on_new_message_callback()
 {
-    if (on_new_message_callback_) {
-      set_callback(nullptr, nullptr);
-      on_new_message_callback_ = nullptr;
+  if (on_new_message_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_message_callback_ = nullptr;
   }
 }
 
