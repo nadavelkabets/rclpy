@@ -118,7 +118,13 @@ class TimerHandler:
             with self._timer.handle:
                 self._timer.handle.call_timer()
 
-            self._loop.call_soon(self._timer.callback)
+            async def callback():
+                try:
+                    await await_or_execute(self._timer.callback)
+                except Exception:
+                    traceback.print_exc()
+
+            self._loop.create_task(callback())
 
     def _time_until_next_call_sec(self):
         return self._timer.time_until_next_call() / S_TO_NS 
