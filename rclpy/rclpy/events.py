@@ -19,8 +19,10 @@ if TYPE_CHECKING:
 
 __executor: Optional['AbstractExecutor'] = None
 
+
 def get_executor() -> Optional['AbstractExecutor']:
     return __executor
+
 
 def set_executor(executor: Optional['AbstractExecutor']):
     global __executor

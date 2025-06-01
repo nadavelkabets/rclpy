@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import traceback
 from types import TracebackType
 from typing import Callable
 from typing import Generic
@@ -19,14 +20,12 @@ from typing import Optional
 from typing import Type
 from typing import TypeVar
 from typing import Union
-import traceback
-import weakref
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
-from rclpy.qos import QoSProfile
 from rclpy.logging import get_logger
+from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
 
@@ -148,9 +147,11 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
             try:
                 callback(number_of_events)
             except Exception:
-                logger.error(f'Caught exception in on request callback for service: {self.service_name}')
+                logger.error(
+                    f'Caught exception in on request callback for service: {self.service_name}'
+                )
                 logger.error(traceback.format_exc())
-    
+
         self.__service.set_on_new_request_callback(safe_callback)
 
     def clear_on_new_request_callback(self) -> None:

@@ -13,28 +13,27 @@
 # limitations under the License.
 
 import asyncio
-import time
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager, ExitStack
 from functools import partial
-from typing import (Any, Callable, Coroutine, Generator, List, Optional, Set, Type,
-                    TypeVar, Union)
+import time
+import traceback
+from typing import (Any, Callable, Coroutine, Generator, List, Optional, Set,
+                    Type, TypeVar, Union)
 
 from rclpy.client import Client
 from rclpy.constants import S_TO_NS
-from rclpy.executors import BaseExecutor, ExternalShutdownException, TracebackType, await_or_execute
+from rclpy.context import Context
 from rclpy.events import set_executor
+from rclpy.executors import (await_or_execute, BaseExecutor, ExternalShutdownException,
+                             TracebackType)
 from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
-
-import rclpy
 from rclpy.utilities import get_default_context
-from rclpy.context import Context
-import traceback
 
-EntityT = TypeVar("EntityT", bound=Union[Subscription, Service, Client, Timer])
+EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
 def _is_timer_destroyed(timer: Timer):
@@ -43,11 +42,10 @@ def _is_timer_destroyed(timer: Timer):
 
 class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def __init__(
-        self,
-        loop: Optional[asyncio.AbstractEventLoop] = None,
+        self, loop: Optional[asyncio.AbstractEventLoop] = None,
         *,
         context: Optional[Context] = None
-    ) -> None: 
+    ) -> None:
         self._loop = loop or self._get_loop()
         self._context = context or get_default_context()
         self._context.on_shutdown(self.shutdown)
@@ -58,7 +56,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._clients: Set[Client] = set()
         self._services: Set[Service] = set()
         self._timers: Set[Timer] = set()
-        
+
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
         self._update_timers_handle: Optional[asyncio.Handle] = None
@@ -133,16 +131,16 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
     def _on_future_complete(self, _: asyncio.Future):
         self._loop.stop()
-    
+
     def spin(
         self,
         once: bool = False,
         future: Optional[asyncio.Future] = None,
-        timeout: Optional[float] = None
+        timeout: Optional[float] = None,
     ) -> None:
         if not self._context.ok():
             return
-        
+
         with ExitStack() as context:
             if once:
                 context.enter_context(self._stop_after_callback())
@@ -161,7 +159,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
     def spin_once_until_future_complete(
         self, future: asyncio.Future, timeout_sec: Optional[float] = None
-    ) -> None: 
+    ) -> None:
         self.spin(once=True, future=future, timeout=timeout_sec)
 
     # TODO: should this function accept an asyncio Future or an rclpy Future?
@@ -178,7 +176,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
         return self._loop.create_task(callback)
 
-    def wake(self) -> None:        
+    def wake(self) -> None:
         self._update_entities_from_nodes()
 
     def add_node(self, node: Node) -> bool:
@@ -199,7 +197,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
     def create_future(self) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
-        
+
         return asyncio_future
 
     # TODO: optimize this function to run less times?
@@ -264,7 +262,11 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
         return added_entities or removed_entities
 
-    def _handle_ready_subscription(self, subscription: Subscription, number_of_events: int) -> None:
+    def _handle_ready_subscription(
+            self,
+            subscription: Subscription,
+            number_of_events: int
+    ) -> None:
         self._loop.call_soon_threadsafe(
             self._handle_ready_entity, self._take_subscription, subscription, number_of_events
         )
@@ -282,7 +284,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def _update_timers(self):
         if self._update_timers_handle and not self._update_timers_handle.cancelled():
             self._update_timers_handle.cancel()
-        
+
         timers = list(self._timers)
         next_jump_time_seconds = None
         for timer in timers:
@@ -292,20 +294,19 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             if timer.is_ready():
                 with timer.handle:
                     timer.handle.call_timer()
-                
+
                 self._loop.call_soon(timer.callback)
-            
+
             timer_next_jump_time = timer.time_until_next_call() / S_TO_NS
             if next_jump_time_seconds is None:
                 next_jump_time_seconds = timer_next_jump_time
             else:
-                next_jump_time_seconds = min(
-                    next_jump_time_seconds,
-                    timer_next_jump_time
-                )
+                next_jump_time_seconds = min(next_jump_time_seconds, timer_next_jump_time)
 
         if next_jump_time_seconds and not self._loop.is_closed():
-            self._update_timers_handle = self._loop.call_later(next_jump_time_seconds, self._update_timers)
+            self._update_timers_handle = self._loop.call_later(
+                next_jump_time_seconds, self._update_timers
+            )
 
     def _handle_ready_entity(
         self,
@@ -315,12 +316,12 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     ) -> None:
         if not self._context.ok():
             raise ExternalShutdownException()
-        
+
         for _ in range(number_of_events):
             callback = take_entity_callback(entity)
             if not callback:
                 break
-            
+
             async def wrapped_callback():
                 try:
                     await callback()

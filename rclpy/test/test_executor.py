@@ -25,7 +25,7 @@ from rclpy.executors import Executor
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.executors import ShutdownException
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.experimental import EventsExecutor, AsyncioExecutor
+from rclpy.experimental import AsyncioExecutor, EventsExecutor
 from rclpy.task import Future
 from test_msgs.srv import Empty
 
@@ -102,7 +102,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_shutdown_executor_before_waiting_for_callbacks(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # EventsExecutor and AsyncioExecutor do not support the wait_for_ready_callbacks() API
+        # This test is unique to the private API of Executor
         for cls in [SingleThreadedExecutor, MultiThreadedExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
@@ -112,7 +112,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_shutdown_exception_from_callback_generator(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # This test touches the Executor private API and is not compatible with EventsExecutor and AsyncioExecutor
+        # This test is unique to the private API of Executor
         for cls in [SingleThreadedExecutor, MultiThreadedExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)

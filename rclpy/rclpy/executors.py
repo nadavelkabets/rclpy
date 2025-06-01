@@ -43,8 +43,8 @@ from rclpy.client import Client
 from rclpy.clock import Clock
 from rclpy.clock_type import ClockType
 from rclpy.context import Context
-from rclpy.exceptions import InvalidHandle
 from rclpy.events import set_executor
+from rclpy.exceptions import InvalidHandle
 from rclpy.guard_condition import GuardCondition
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.service import Service
@@ -120,7 +120,11 @@ class _WorkTracker:
 
 
 @overload
-async def await_or_execute(callback: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any) -> T: ...
+async def await_or_execute(
+    callback: Callable[..., Coroutine[Any, Any, T]],
+    *args: Any,
+    **kwargs: Any
+) -> T: ...
 
 
 @overload
@@ -177,37 +181,37 @@ class TimeoutObject:
 
 
 class AbstractExecutor(Generic[FutureT, TaskT]):
-    
+
     @property
     def context(self) -> Context:
         raise NotImplementedError()
-    
+
     def wake(self) -> None:
         raise NotImplementedError()
-    
+
     def shutdown(self) -> bool:
         raise NotImplementedError()
-    
+
     def spin(self) -> None:
         raise NotImplementedError()
-    
+
     def spin_until_future_complete(
         self,
         future: FutureT,
         timeout_sec: Optional[float] = None
     ) -> None:
         raise NotImplementedError()
-    
+
     def spin_once(self, timeout_sec: Optional[float] = None) -> None:
         raise NotImplementedError()
-    
+
     def spin_once_until_future_complete(
         self,
         future: Future[Any],
         timeout_sec: Optional[Union[float, TimeoutObject]] = None
     ) -> None:
         raise NotImplementedError()
-    
+
     def create_task(
         self,
         callback: Union[Callable, Coroutine],
@@ -215,16 +219,16 @@ class AbstractExecutor(Generic[FutureT, TaskT]):
         **kwargs: Any
     ) -> TaskT:
         raise NotImplementedError()
-    
+
     def create_future(self) -> FutureT:
         raise NotImplementedError()
-    
+
     def add_node(self, node: 'Node') -> bool:
         raise NotImplementedError()
-    
+
     def remove_node(node: 'Node') -> None:
         raise NotImplementedError()
-    
+
     def get_nodes(self) -> List['Node']:
         raise NotImplementedError()
 
@@ -257,7 +261,7 @@ class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
             pass
 
         return None
-    
+
     def _take_client(self, client: Client[Any, Any]
                      ) -> Optional[Callable[[], Coroutine[None, None, None]]]:
         try:
@@ -277,7 +281,7 @@ class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
                 else:
                     if isinstance(future, Future) and not future._executor():
                         future._set_executor(self)
-                    
+
                     future.set_result(response)
             return _execute
 
@@ -963,7 +967,7 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.shutdown()
-        
+
     def create_future(self) -> Future:
         return Future(executor=self)
 

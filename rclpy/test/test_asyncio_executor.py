@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import asyncio
+from contextlib import contextmanager
 import math
 import time
-from contextlib import contextmanager
+from typing import Generator
 from unittest.mock import Mock
 
 import pytest
-from rclpy import Context
+import rclpy
 from rclpy.executors import AbstractExecutor, ExternalShutdownException
 from rclpy.experimental.asyncio_executor import AsyncioExecutor
 from rclpy.node import Node
@@ -27,15 +28,14 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
 from std_msgs.msg import String
 from test_msgs.srv import BasicTypes
-from typing import Generator
 
-import rclpy
 
 @contextmanager
 def asyncio_executor(loop=None) -> Generator[AsyncioExecutor, None, None]:
     executor = AsyncioExecutor(loop)
     yield executor
     executor.shutdown()
+
 
 @contextmanager
 def attach_to_executor(node: Node, executor: AbstractExecutor) -> Generator[None, None, None]:
@@ -68,7 +68,7 @@ def executor(asyncio_loop) -> Generator[AsyncioExecutor, None, None]:
 
 @pytest.fixture
 def test_node() -> Generator[Node, None, None]:
-    node = Node("test_node")
+    node = Node('test_node')
     yield node
     node.destroy_node()
 
@@ -89,9 +89,9 @@ def test_rclpy_future_crashes_asyncio_task():
 
 def test_spin_once_returns_after_callback(executor, attached_test_node):
     mock = Mock()
-    msg = String(data="test")
-    attached_test_node.create_subscription(String, "/test", mock, 10)
-    pub = attached_test_node.create_publisher(String, "/test", 10)
+    msg = String(data='test')
+    attached_test_node.create_subscription(String, '/test', mock, 10)
+    pub = attached_test_node.create_publisher(String, '/test', 10)
     pub.publish(msg)
 
     start_time = time.time()
@@ -108,9 +108,9 @@ def test_spin_once_returns_after_timeout(executor):
 
 def test_executor_executes_existing_callbacks_from_initialized_node(test_node, executor):
     mock = Mock()
-    msg = String(data="test")
-    test_node.create_subscription(String, "/test", mock, 10)
-    pub = test_node.create_publisher(String, "/test", 10)
+    msg = String(data='test')
+    test_node.create_subscription(String, '/test', mock, 10)
+    pub = test_node.create_publisher(String, '/test', 10)
     pub.publish(msg)
     with attach_to_executor(test_node, executor):
         executor.spin_once()
@@ -120,9 +120,9 @@ def test_executor_executes_existing_callbacks_from_initialized_node(test_node, e
 
 def test_executor_discards_subscription_from_removed_node(test_node, executor):
     mock = Mock()
-    msg = String(data="test")
-    test_node.create_subscription(String, "/test", mock, 10)
-    pub = test_node.create_publisher(String, "/test", 10)
+    msg = String(data='test')
+    test_node.create_subscription(String, '/test', mock, 10)
+    pub = test_node.create_publisher(String, '/test', 10)
 
     with attach_to_executor(test_node, executor):
         executor.spin_once(timeout_sec=0.01)
@@ -153,16 +153,16 @@ def test_basic_service_call(executor, attached_test_node):
     client = attached_test_node.create_client(BasicTypes, '/test_srv')
     fut = client.call_async(BasicTypes.Request(bool_value=True))
     executor.spin_until_future_complete(fut, timeout_sec=0.3)
-    assert fut.result().string_value == "True"
+    assert fut.result().string_value == 'True'
 
 
 def test_transient_local_subscriber_receives_queued_messages(test_node, executor):
     fut = executor.create_future()
     qos = QoSProfile(history=HistoryPolicy.KEEP_ALL, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    pub = test_node.create_publisher(String, "/test", qos)
+    pub = test_node.create_publisher(String, '/test', qos)
 
     for _ in range(5):
-        pub.publish(String(data="msg"))
+        pub.publish(String(data='msg'))
 
     received = []
 
@@ -171,11 +171,11 @@ def test_transient_local_subscriber_receives_queued_messages(test_node, executor
         if len(received) == 5:
             fut.set_result(None)
 
-    test_node.create_subscription(String, "/test", callback, qos)
+    test_node.create_subscription(String, '/test', callback, qos)
 
     with attach_to_executor(test_node, executor):
         executor.spin_until_future_complete(fut, timeout_sec=0.5)
-    
+
     assert fut.done()
 
 
@@ -184,8 +184,8 @@ def test_service_unavailable_after_node_removed(test_node, executor):
         resp.bool_value = True
         return resp
 
-    test_node.create_service(BasicTypes, "/test_srv", service_cb)
-    client = test_node.create_client(BasicTypes, "/test_srv")
+    test_node.create_service(BasicTypes, '/test_srv', service_cb)
+    client = test_node.create_client(BasicTypes, '/test_srv')
 
     with attach_to_executor(test_node, executor):
         req = BasicTypes.Request()
@@ -197,6 +197,7 @@ def test_service_unavailable_after_node_removed(test_node, executor):
     executor.spin_once(timeout_sec=0.1)
     assert not fut2.done()
 
+
 def test_spin_returns_if_context_is_not_ok():
     with asyncio_executor() as executor:
         mock = Mock()
@@ -205,23 +206,29 @@ def test_spin_returns_if_context_is_not_ok():
         executor.spin()
         mock.assert_not_called()
 
+
 def test_executor_crashes_if_context_shuts_down_during_spin():
     with asyncio_executor() as executor:
         executor.loop.call_soon(executor.context.shutdown)
         with pytest.raises(ExternalShutdownException):
             executor.spin()
 
+
 def test_timer_jumps_when_expected(attached_test_node, executor):
     future = executor.create_future()
+
     def _cb():
         future.set_result(None)
+
     attached_test_node.create_timer(0.5, _cb)
     start_time = time.time()
     executor.spin_until_future_complete(future, timeout_sec=0.7)
-    assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1) 
+    assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1)
+
 
 def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
     future = executor.create_future()
+
     def _cb():
         future.set_result(None)
 
@@ -234,6 +241,7 @@ def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
     assert not future.done()
     executor.spin_until_future_complete(future, timeout_sec=0.5)
     assert future.done() and math.isclose(time.time() - start_time, 0.8, abs_tol=0.1)
+
 
 def test_shutdown_context(attached_test_node, executor):
     rclpy.shutdown()

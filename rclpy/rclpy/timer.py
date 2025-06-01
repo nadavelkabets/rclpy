@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import threading
-import weakref
 import traceback
 
 from types import TracebackType
@@ -30,7 +29,6 @@ from rclpy.exceptions import InvalidHandle, ROSInterruptException
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.time import Time
 from rclpy.utilities import get_default_context
-from rclpy.logging import get_logger
 
 
 class TimerInfo:
@@ -140,7 +138,7 @@ class Timer:
         with self.__timer:
             self.__timer.change_timer_period(val)
         self.__timer_period_ns = val
-        
+
     def is_ready(self) -> bool:
         with self.__timer:
             return self.__timer.is_timer_ready()
@@ -182,7 +180,7 @@ class Timer:
                 callback(number_of_events)
             except Exception:
                 traceback.print_exc()
-    
+
         self.__timer.set_on_reset_callback(safe_callback)
 
     def clear_on_reset_callback(self) -> None:

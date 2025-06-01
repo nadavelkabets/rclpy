@@ -13,12 +13,11 @@
 # limitations under the License.
 
 
+from enum import Enum
 import inspect
 import traceback
-from enum import Enum
-from types import MethodType, TracebackType
+from types import TracebackType
 from typing import Callable, Generic, Optional, Type, TypedDict, TypeVar, Union
-import weakref
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.event_handler import SubscriptionEventCallbacks
@@ -37,6 +36,7 @@ class MessageInfo(TypedDict):
 
 # Left to support Legacy TypeVars.
 MsgType = TypeVar('MsgType')
+
 
 class Subscription(Generic[MsgT]):
 
@@ -157,9 +157,11 @@ class Subscription(Generic[MsgT]):
             try:
                 callback(number_of_events)
             except Exception:
-                logger.error(f'Caught exception in on message callback for subscription: {self.topic_name}')
+                logger.error(
+                    f'Caught exception in on message callback for subscription: {self.topic_name}'
+                )
                 logger.error(traceback.format_exc())
-    
+
         self.__subscription.set_on_new_message_callback(safe_callback)
 
     def clear_on_new_message_callback(self) -> None:

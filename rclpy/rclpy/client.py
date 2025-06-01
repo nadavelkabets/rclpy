@@ -13,27 +13,26 @@
 # limitations under the License.
 
 import threading
-import weakref
 import time
+import traceback
 from types import TracebackType
+from typing import Callable
 from typing import Dict
 from typing import Generic
 from typing import Optional
 from typing import Type
 from typing import TypeVar
-from typing import Callable
-import traceback
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
 from rclpy.context import Context
 from rclpy.events import get_executor
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
+from rclpy.logging import get_logger
 from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.task import Future
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
-from rclpy.logging import get_logger
 
 # Left To Support Legacy TypeVars
 SrvType = TypeVar('SrvType')
@@ -146,7 +145,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
                 future = executor.create_future()
             else:
                 future = Future[SrvResponseT]()
-                
+
             self._pending_requests[sequence_number] = future
 
             future.add_done_callback(self.remove_pending_request)
@@ -257,7 +256,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
     def get_logger_name(self) -> str:
         with self.handle:
             return self.__client.get_logger_name()
-        
+
     def set_on_new_response_callback(self, callback: Callable[[int], None]) -> None:
         logger = get_logger(self.get_logger_name())
 
@@ -265,9 +264,11 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             try:
                 callback(number_of_events)
             except Exception:
-                logger.error(f'Caught exception in on response callback for client: {self.service_name}')
+                logger.error(
+                    f'Caught exception in on response callback for client: {self.service_name}'
+                )
                 logger.error(traceback.format_exc())
-    
+
         self.__client.set_on_new_response_callback(safe_callback)
 
     def clear_on_new_response_callback(self) -> None:
