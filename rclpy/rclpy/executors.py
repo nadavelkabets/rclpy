@@ -189,7 +189,7 @@ class AbstractExecutor(Generic[FutureT, TaskT]):
     def wake(self) -> None:
         raise NotImplementedError()
 
-    def shutdown(self) -> bool:
+    def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
         raise NotImplementedError()
 
     def spin(self) -> None:

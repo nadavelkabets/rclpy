@@ -39,11 +39,16 @@ EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
 class TimerHandler:
-    def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(
+        self,
+        timer: Timer,
+        loop: asyncio.AbstractEventLoop,
+        schedule_task_callback: Callable[[Coroutine, Callable[[], None]], None],
+    ) -> None:
         self._timer = timer
         self._loop = loop
+        self._schedule_task_callback = schedule_task_callback
 
-        self._tasks: Set[asyncio.Task] = set()
         self._call_later_handle: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
 
@@ -57,8 +62,6 @@ class TimerHandler:
     def on_remove(self) -> None:
         self._cancel_call_later()
         self._unregister_jump_handle()
-        for task in self._tasks:
-            task.cancel()
 
     def on_reset(self, _: int = None) -> None:
         self._cancel_call_later()
@@ -124,15 +127,10 @@ class TimerHandler:
             with self._timer.handle:
                 self._timer.handle.call_timer()
 
-            async def callback():
-                try:
-                    await await_or_execute(self._timer.callback)
-                except Exception:
-                    traceback.print_exc()
-
-            task = self._loop.create_task(callback())
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.remove)
+            self._schedule_task_callback(
+                await_or_execute(self._timer.callback),
+                traceback.print_exc
+            )
 
     def _time_until_next_call_sec(self):
         return self._timer.time_until_next_call() / S_TO_NS 
@@ -189,7 +187,23 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     ) -> None:
         self.shutdown()
 
-    def shutdown(self, close_loop: bool = True) -> None:
+    def _schedule_task(self,
+        coroutine: Coroutine,
+        exception_handler: Callable[[], None]
+    ) -> None:
+        async def wrapped_coroutine():
+            try:
+                await coroutine
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                exception_handler()
+
+        task = self._loop.create_task(wrapped_coroutine())
+        task.add_done_callback(self._tasks.remove)
+        self._tasks.add(task)
+
+    def shutdown(self, timeout_sec: Optional[float] = None, close_loop: bool = True) -> bool:
         """Clear all nodes and close the event loop."""
         self._nodes.clear()
         self._update_entities_from_nodes()
@@ -198,11 +212,23 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             task.cancel()
 
         if self._loop.is_running():
-            self._loop.stop()
-        elif not self._loop.is_closed() and close_loop:
+            if not self._tasks:
+                self._loop.stop()
+                return True
+
+            return False
+
+        if self._tasks:
+            _, pending = self._loop.run_until_complete(
+                asyncio.wait(list(self._tasks), timeout=timeout_sec)
+            )
+            if pending:
+                return False
+
+        if not self._loop.is_closed() and close_loop:
             self._loop.close()
 
-        set_executor(None)
+        return True
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
@@ -340,7 +366,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         )
 
     def _handle_added_timer(self, timer: Timer):
-        handler = TimerHandler(timer, self._loop)
+        handler = TimerHandler(timer, self._loop, self._schedule_task)
         self._timer_handlers[timer] = handler
         timer.set_on_reset_callback(handler.on_reset)
 
@@ -403,15 +429,10 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             if not callback:
                 break
 
-            async def wrapped_callback():
-                try:
-                    await callback()
-                except Exception:
-                    get_logger(entity.get_logger_name()).error(traceback.format_exc())
-
-            task = self._loop.create_task(wrapped_callback())
-            self._tasks.add(task)
-            task.add_done_callback(self._tasks.remove)
+            self._schedule_task(
+                callback(),
+                lambda: get_logger(entity.get_logger_name()).error(traceback.format_exc())
+            )
 
         if self._should_stop_after_callback and not self._stop_handle:
             self._stop_handle = self._loop.call_soon(self._loop.stop)
