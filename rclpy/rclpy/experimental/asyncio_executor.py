@@ -46,12 +46,12 @@ class TaskHandler:
 
     def create_task(
         self,
-        coroutine: Coroutine,
+        callback: Callable[[], Coroutine],
         exception_handler: Callable[[Exception], None]
     ) -> asyncio.Task:
         async def wrapped_coroutine():
             try:
-                await coroutine
+                await callback()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -170,7 +170,7 @@ class TimerHandler:
                 self._timer.handle.call_timer()
 
             self._task_handler.create_task(
-                await_or_execute(self._timer.callback),
+                partial(await_or_execute, self._timer.callback),
                 traceback.print_exception
             )
 
@@ -451,7 +451,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
                 break
 
             self._task_handler.create_task(
-                callback(),
+                callback,
                 lambda exc: get_logger(entity.get_logger_name()).error("".join(traceback.format_exception(exc)))
             )
 

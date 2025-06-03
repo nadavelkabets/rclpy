@@ -22,7 +22,7 @@ from unittest.mock import Mock
 import pytest
 import rclpy
 from rclpy.executors import AbstractExecutor, ExternalShutdownException
-from rclpy.experimental.asyncio_executor import AsyncioExecutor
+from rclpy.experimental.asyncio_executor import AsyncioExecutor, TaskHandler
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
@@ -85,6 +85,99 @@ def test_rclpy_future_crashes_asyncio_task():
 
     with pytest.raises(RuntimeError):
         asyncio.run(test_coro())
+
+
+@pytest.fixture
+def task_handler(asyncio_loop) -> Generator[TaskHandler, None, None]:
+    handler = TaskHandler(asyncio_loop)
+    yield handler
+    handler.cancel_all()
+    handler.wait_for_pending_tasks_to_finish()
+
+
+def test_task_handler_calls_exception_handler_with_captured_exception(asyncio_loop, task_handler):
+    mock = Mock()
+    exception = RuntimeError("err")
+    
+    async def test_coro():
+        raise exception
+    
+    task = task_handler.create_task(test_coro, mock)
+    asyncio_loop.run_until_complete(task)
+    mock.assert_called_once_with(exception)
+
+
+def test_task_handler_raises_cancelled_error_on_cancelled_task(asyncio_loop, task_handler):
+    mock = Mock()
+    
+    async def test_coro():
+        await asyncio_loop.create_future()
+    
+    task = task_handler.create_task(test_coro, mock)
+    asyncio_loop.call_soon(task.cancel)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio_loop.run_until_complete(task)
+    mock.assert_not_called()
+
+
+def test_task_handler_task_count_updates_after_immediate_completion(asyncio_loop, task_handler):
+    async def immediate_coro():
+        return "done"
+
+    assert task_handler.task_count == 0
+    task = task_handler.create_task(immediate_coro, exception_handler=lambda e: None)
+    asyncio_loop.run_until_complete(task)
+    assert task_handler.task_count == 0
+
+
+def test_wait_for_pending_tasks_to_finish_returns_false_if_still_pending(asyncio_loop, task_handler):
+    async def long_coro():
+        await asyncio_loop.create_future()
+
+    task = task_handler.create_task(long_coro, exception_handler=lambda e: None)
+    assert task_handler.task_count == 1
+    result = task_handler.wait_for_pending_tasks_to_finish(timeout_sec=0.01)
+    assert result is False
+    assert task_handler.task_count == 1
+
+
+def test_wait_for_pending_tasks_to_finish_returns_true_after_task_finishes(task_handler):
+    async def short_coro():
+        await asyncio.sleep(0.01)
+
+    task = task_handler.create_task(short_coro, exception_handler=lambda e: None)
+    assert task_handler.task_count == 1
+    result = task_handler.wait_for_pending_tasks_to_finish(timeout_sec=0.1)
+    assert result is True
+    assert task_handler.task_count == 0
+
+
+def test_cancel_all_cancels_every_pending_task_and_decrements_count(asyncio_loop, task_handler):
+    async def long_coro():
+        await asyncio_loop.create_future()
+
+    task1 = task_handler.create_task(long_coro, exception_handler=lambda e: None)
+    task2 = task_handler.create_task(long_coro, exception_handler=lambda e: None)
+    assert task_handler.task_count == 2
+    task_handler.cancel_all()
+    finished = task_handler.wait_for_pending_tasks_to_finish(timeout_sec=0.1)
+    assert finished is True
+    assert task_handler.task_count == 0
+
+
+def test_cancelled_task_raises_cancelled_error_and_does_not_call_exception_handler(asyncio_loop, task_handler):
+    mock = Mock()
+
+    async def never_ending():
+        await asyncio.Future()
+
+    task = task_handler.create_task(never_ending, mock)
+    asyncio_loop.call_soon(task.cancel)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio_loop.run_until_complete(task)
+
+    mock.assert_not_called()
 
 
 def test_spin_once_returns_after_callback(executor, attached_test_node):
