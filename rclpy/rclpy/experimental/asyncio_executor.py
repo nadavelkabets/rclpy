@@ -15,6 +15,7 @@
 import asyncio
 from contextlib import contextmanager, ExitStack
 from functools import partial
+from sys import exc_info
 import time
 import traceback
 from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
@@ -38,16 +39,57 @@ from rclpy.utilities import get_default_context
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
+class TaskHandler:
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._tasks: Set[asyncio.Task] = set()
+
+    def create_task(
+        self,
+        coroutine: Coroutine,
+        exception_handler: Callable[[Exception], None]
+    ) -> asyncio.Task:
+        async def wrapped_coroutine():
+            try:
+                await coroutine
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                exception_handler(exc)
+
+        task = self._loop.create_task(wrapped_coroutine())
+        task.add_done_callback(self._tasks.remove)
+        self._tasks.add(task)
+        return task
+    
+    def cancel_all(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+
+    @property
+    def task_count(self) -> int:
+        return len(self._tasks)
+    
+    def wait_for_pending_tasks_to_finish(self, timeout_sec: Optional[float] = None) -> bool:
+        if not self.task_count:
+            return True
+        
+        _, pending = self._loop.run_until_complete(
+            asyncio.wait(list(self._tasks), timeout=timeout_sec)
+        )
+        return not pending
+
+
 class TimerHandler:
     def __init__(
         self,
         timer: Timer,
         loop: asyncio.AbstractEventLoop,
-        schedule_task_callback: Callable[[Coroutine, Callable[[], None]], None],
+        task_handler: TaskHandler,
     ) -> None:
         self._timer = timer
         self._loop = loop
-        self._schedule_task_callback = schedule_task_callback
+        self._task_handler = task_handler
 
         self._call_later_handle: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
@@ -127,9 +169,9 @@ class TimerHandler:
             with self._timer.handle:
                 self._timer.handle.call_timer()
 
-            self._schedule_task_callback(
+            self._task_handler.create_task(
                 await_or_execute(self._timer.callback),
-                traceback.print_exc
+                traceback.print_exception
             )
 
     def _time_until_next_call_sec(self):
@@ -149,7 +191,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._context = context or get_default_context()
         self._context.on_shutdown(self.shutdown)
 
-        self._tasks: Set[asyncio.Task] = set()
+        self._task_handler = TaskHandler(self._loop)
         self._nodes: Set[Node] = set()
         self._subscriptions: Set[Subscription] = set()
         self._clients: Set[Client] = set()
@@ -187,43 +229,22 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     ) -> None:
         self.shutdown()
 
-    def _schedule_task(self,
-        coroutine: Coroutine,
-        exception_handler: Callable[[], None]
-    ) -> None:
-        async def wrapped_coroutine():
-            try:
-                await coroutine
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                exception_handler()
-
-        task = self._loop.create_task(wrapped_coroutine())
-        task.add_done_callback(self._tasks.remove)
-        self._tasks.add(task)
-
     def shutdown(self, timeout_sec: Optional[float] = None, close_loop: bool = True) -> bool:
         """Clear all nodes and close the event loop."""
         self._nodes.clear()
         self._update_entities_from_nodes()
 
-        for task in self._tasks:
-            task.cancel()
+        self._task_handler.cancel_all()
 
         if self._loop.is_running():
-            if not self._tasks:
+            if not self._task_handler.task_count:
                 self._loop.stop()
                 return True
 
             return False
 
-        if self._tasks:
-            _, pending = self._loop.run_until_complete(
-                asyncio.wait(list(self._tasks), timeout=timeout_sec)
-            )
-            if pending:
-                return False
+        if not self._task_handler.wait_for_pending_tasks_to_finish(timeout_sec):
+            return False
 
         if not self._loop.is_closed() and close_loop:
             self._loop.close()
@@ -366,7 +387,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         )
 
     def _handle_added_timer(self, timer: Timer):
-        handler = TimerHandler(timer, self._loop, self._schedule_task)
+        handler = TimerHandler(timer, self._loop, self._task_handler)
         self._timer_handlers[timer] = handler
         timer.set_on_reset_callback(handler.on_reset)
 
@@ -429,9 +450,9 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             if not callback:
                 break
 
-            self._schedule_task(
+            self._task_handler.create_task(
                 callback(),
-                lambda: get_logger(entity.get_logger_name()).error(traceback.format_exc())
+                lambda exc: get_logger(entity.get_logger_name()).error("".join(traceback.format_exception(exc)))
             )
 
         if self._should_stop_after_callback and not self._stop_handle:
