@@ -43,7 +43,6 @@ from rclpy.client import Client
 from rclpy.clock import Clock
 from rclpy.clock_type import ClockType
 from rclpy.context import Context
-from rclpy.events import set_executor
 from rclpy.exceptions import InvalidHandle
 from rclpy.guard_condition import GuardCondition
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
@@ -367,7 +366,6 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         self._sigint_gc: Optional[SignalHandlerGuardCondition] = \
             SignalHandlerGuardCondition(context)
         self._context.on_shutdown(self.wake)
-        set_executor(self)
 
     @property
     def context(self) -> Context:
@@ -436,7 +434,6 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         self._cb_iter = None
         self._last_args = None
         self._last_kwargs = None
-        set_executor(None)
         return True
 
     def __del__(self) -> None:

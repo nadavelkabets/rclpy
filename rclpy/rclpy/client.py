@@ -26,7 +26,6 @@ from typing import TypeVar
 from rclpy.callback_groups import CallbackGroup
 from rclpy.clock import Clock
 from rclpy.context import Context
-from rclpy.events import get_executor
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.logging import get_logger
 from rclpy.qos import QoSProfile
@@ -121,7 +120,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             raise exception
         return future.result()
 
-    def call_async(self, request: SrvRequestT) -> Future[SrvResponseT]:
+    def call_async(self, request: SrvRequestT, *, future=None) -> Future[SrvResponseT]:
         """
         Make a service request and asynchronously get the result.
 
@@ -140,12 +139,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             if sequence_number in self._pending_requests:
                 raise RuntimeError(f'Sequence ({sequence_number}) conflicts with pending request')
 
-            executor = get_executor()
-            if executor:
-                future = executor.create_future()
-            else:
-                future = Future[SrvResponseT]()
-
+            future = future or Future[SrvResponseT]()
             self._pending_requests[sequence_number] = future
 
             future.add_done_callback(self.remove_pending_request)

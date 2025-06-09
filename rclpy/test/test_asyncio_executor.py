@@ -248,7 +248,7 @@ def test_basic_service_call(executor, attached_test_node):
 
     attached_test_node.create_service(BasicTypes, '/test_srv', cb)
     client = attached_test_node.create_client(BasicTypes, '/test_srv')
-    fut = client.call_async(BasicTypes.Request(bool_value=True))
+    fut = client.call_async(BasicTypes.Request(bool_value=True), future=executor.loop.create_future())
     executor.spin_until_future_complete(fut, timeout_sec=0.3)
     assert fut.result().string_value == 'True'
 
@@ -286,11 +286,11 @@ def test_service_unavailable_after_node_removed(test_node, executor):
 
     with attach_to_executor(test_node, executor):
         req = BasicTypes.Request()
-        fut = client.call_async(req)
+        fut = client.call_async(req, future=executor.loop.create_future())
         executor.spin_until_future_complete(fut, timeout_sec=0.3)
         assert fut.result().bool_value is True
 
-    fut2 = client.call_async(BasicTypes.Request())
+    fut2 = client.call_async(BasicTypes.Request(), future=executor.loop.create_future())
     executor.spin_once(timeout_sec=0.1)
     assert not fut2.done()
 

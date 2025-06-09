@@ -26,7 +26,6 @@ from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, ROSClock, TimeJu
 from rclpy.constants import S_TO_NS
 from rclpy.context import Context
 from rclpy.duration import Duration
-from rclpy.events import set_executor
 from rclpy.executors import (await_or_execute, BaseExecutor, ExternalShutdownException,
                              TracebackType)
 from rclpy.logging import get_logger
@@ -202,8 +201,6 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._should_stop_after_callback = False
         self._stop_handle: Optional[asyncio.Handle] = None
         self._update_timers_handle: Optional[asyncio.Handle] = None
-
-        set_executor(self)
 
     def get_nodes(self) -> List['Node']:
         """Return nodes that have been added to this executor."""
