@@ -21,11 +21,15 @@ from unittest.mock import Mock
 
 import pytest
 import rclpy
+from rclpy.constants import S_TO_NS
 from rclpy.executors import AbstractExecutor, ExternalShutdownException
 from rclpy.experimental.asyncio_executor import AsyncioExecutor, TaskHandler
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
+from rclpy.parameter import Parameter
+from rclpy.duration import Duration
+from rclpy.time import Time
 from std_msgs.msg import String
 from test_msgs.srv import BasicTypes
 
@@ -307,18 +311,6 @@ def test_executor_crashes_if_context_shuts_down_during_spin():
             executor.spin()
 
 
-def test_timer_jumps_when_expected(attached_test_node, executor):
-    future = executor.create_future()
-
-    def _cb():
-        future.set_result(None)
-
-    attached_test_node.create_timer(0.5, _cb)
-    start_time = time.time()
-    executor.spin_until_future_complete(future, timeout_sec=0.7)
-    assert future.done() and math.isclose(time.time() - start_time, 0.5, abs_tol=0.1)
-
-
 def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
     future = executor.create_future()
 
@@ -336,5 +328,38 @@ def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
     assert future.done() and math.isclose(time.time() - start_time, 0.8, abs_tol=0.1)
 
 
-def test_shutdown_context(attached_test_node, executor):
+def test_timer_fires_with_system_time_by_default(attached_test_node, executor):
+    future = executor.create_future()
+
+    def cb():
+        future.set_result(time.time())
+
+    attached_test_node.create_timer(0.2, cb)
+    start = time.time()
+    executor.spin_until_future_complete(future, timeout_sec=0.4)
+    assert future.done()
+    elapsed = future.result() - start
+    assert math.isclose(elapsed, 0.2, abs_tol=0.05)
+
+
+def test_timer_fires_when_ros_time_is_active(attached_test_node, executor):
+    attached_test_node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+    future = executor.create_future()
+
+    def cb():
+        future.set_result(None)
+
+    timer = attached_test_node.create_timer(0.3, cb)
+
+    attached_test_node.get_clock().set_ros_time_override(Time(nanoseconds=int(0.25 * S_TO_NS)))
+    executor.spin_once(timeout_sec=0.1)
+    assert not future.done()
+
+    attached_test_node.get_clock().set_ros_time_override(Time(nanoseconds=int(0.3 * S_TO_NS)))
+    executor.spin_until_future_complete(future, timeout_sec=0.1)
+    assert future.done()
+
+
+def test_event_loop_is_closed_after_shutting_down_context(attached_test_node, executor):
     rclpy.shutdown()
+    assert executor.loop.is_closed()
