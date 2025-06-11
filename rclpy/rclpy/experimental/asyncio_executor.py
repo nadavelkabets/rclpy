@@ -261,6 +261,10 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             if ready_task_getter in done:
                 task = ready_task_getter.result()
                 task()
+
+                if task in self._tasks and (task.done() or task.cancelled()):
+                    self._tasks.remove(task)
+
         finally:
             if ready_task_getter in pending:
                 ready_task_getter.cancel()
@@ -290,8 +294,6 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
     ) -> Task:
         task = Task(handler=callback, args=args, kwargs=kwargs, executor=self)
-        task.add_done_callback(self._tasks.remove)
-        self._tasks.add(task)
         self._ready_tasks.put_nowait(task)
         return task
 
@@ -434,4 +436,4 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             except Exception as exc:
                 exception_handler(exc)
 
-        self.create_task(wrapped_coroutine)
+        self._tasks.add(self.create_task(wrapped_coroutine))

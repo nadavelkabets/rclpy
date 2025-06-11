@@ -219,8 +219,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_execute_coroutine_timer(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # AsyncioExecutor spin_once behavior is not compatible with this test
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -299,8 +298,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_coroutine_cancel(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # AsyncioExecutor fail since asyncio task is considered done when cancelled
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -339,8 +337,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_fifo_order(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # The AsyncioExecutor event loop will execute both tasks in one spin_once()
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
@@ -368,8 +365,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_dependent_coroutines(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # AsyncioExecutor fails since it will finish both tasks in two spin_once iterations
-        for cls in [SingleThreadedExecutor, EventsExecutor]:
+        for cls in [SingleThreadedExecutor, EventsExecutor, AsyncioExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
                 executor.add_node(self.node)
