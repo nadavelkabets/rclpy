@@ -13,6 +13,7 @@
 # limitations under the License.
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from collections import deque
 from functools import partial
 import inspect
 import os
@@ -36,6 +37,7 @@ from typing import Type
 from typing import TYPE_CHECKING
 from typing import TypeVar
 from typing import Union
+from typing import Deque
 
 import warnings
 
@@ -347,7 +349,7 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         self._nodes: Set[Node] = set()
         self._nodes_lock = RLock()
         # Tasks to be executed (oldest first) 3-tuple Task, Entity, Node
-        self._tasks: List[Tuple[Task[Any], 'Optional[Entity]', Optional[Node]]] = []
+        self._tasks: Deque[Tuple[Task[Any], 'Optional[Entity]', Optional[Node]]] = deque()
         self._tasks_lock = Lock()
         # This is triggered when wait_for_ready_callbacks should rebuild the wait list
         self._guard: Optional[GuardCondition] = GuardCondition(
@@ -400,6 +402,13 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
                 self._guard.trigger()
         # Task inherits from Future
         return task
+
+    def _resume_task(self, task: Task):
+        with self._tasks_lock:
+            self._tasks.append((task, None, None))
+            if self._guard:
+                self._guard.trigger()
+
 
     def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
         """
@@ -725,21 +734,16 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
             if nodes_to_use is None:
                 nodes_to_use = self.get_nodes()
 
-            # Yield tasks in-progress before waiting for new work
-            tasks = None
             with self._tasks_lock:
-                tasks = list(self._tasks)
-            if tasks:
-                for task, entity, node in tasks:
+                num_tasks = len(self._tasks)
+            if num_tasks:
+                for _ in range(num_tasks):
+                    with self._tasks_lock:
+                        task, entity, node = self._tasks.popleft()
                     if (not task.executing() and not task.done() and
                             (node is None or node in nodes_to_use)):
                         yielded_work = True
                         yield task, entity, node
-                with self._tasks_lock:
-                    # Get rid of any tasks that are done
-                    self._tasks = list(filter(lambda t_e_n: not t_e_n[0].done(), self._tasks))
-                    # Get rid of any tasks that are cancelled
-                    self._tasks = list(filter(lambda t_e_n: not t_e_n[0].cancelled(), self._tasks))
 
             # Gather entities that can be waited on
             subscriptions: List[Subscription[Any, ]] = []

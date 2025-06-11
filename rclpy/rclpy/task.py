@@ -71,8 +71,6 @@ class Future(Generic[T]):
     def __await__(self) -> Generator[None, None, Optional[T]]:
         # Yield if the task is not finished
         while self._pending():
-            # yield self will crash any asyncio task awaiting the rclpy future
-            # bare yield causes the asyncio event loop to busy loop
             yield self
         return self.result()
 
@@ -278,6 +276,7 @@ class Task(Future[T]):
         self._executing = False
         # Lock acquired to prevent task from executing in parallel with itself
         self._task_lock = threading.Lock()
+        self._fut_waiter: Optional[Future] = None
 
     def __call__(self) -> None:
         """
@@ -303,7 +302,14 @@ class Task(Future[T]):
                 # Execute a coroutine
                 handler = self._handler
                 try:
-                    handler.send(None)
+                    future = handler.send(None)
+                    executor = self._executor()
+                    if executor and hasattr(executor, "_resume_task"):
+                        if future:
+                            future.add_done_callback(self.__wake)
+                            self._fut_waiter = future
+                        else:
+                            executor._resume_task(self)
                 except StopIteration as e:
                     # The coroutine finished; store the result
                     self.set_result(e.value)
@@ -324,6 +330,14 @@ class Task(Future[T]):
         finally:
             self._task_lock.release()
 
+    def __wake(self, fut: Future):
+        self._fut_waiter = None
+        if fut.cancelled():
+            self.cancel()        
+        elif exception:= fut.exception() is not None:
+            self.set_exception(exception)
+        else:
+            self()
     def _complete_task(self) -> None:
         """Cleanup after task finished."""
         self._handler = None
@@ -339,6 +353,10 @@ class Task(Future[T]):
         return self._executing
 
     def cancel(self) -> None:
+        if self._fut_waiter:
+            self._fut_waiter.cancel()
+            return
+        
         if self._pending() and inspect.iscoroutine(self._handler):
             self._handler.close()
 

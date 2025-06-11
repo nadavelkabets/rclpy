@@ -13,14 +13,16 @@
 # limitations under the License.
 
 import asyncio
-from contextlib import contextmanager, ExitStack
+import inspect
 from functools import partial
 from sys import exc_info
 import time
+from tkinter import SEL_FIRST
 import traceback
 from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
                     Type, TypeVar, Union)
 
+from rclpy.task import Task
 from rclpy.client import Client
 from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, ROSClock, TimeJump
 from rclpy.constants import S_TO_NS
@@ -38,57 +40,16 @@ from rclpy.utilities import get_default_context
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
-class TaskHandler:
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
-        self._tasks: Set[asyncio.Task] = set()
-
-    def create_task(
-        self,
-        callback: Callable[[], Coroutine],
-        exception_handler: Callable[[Exception], None]
-    ) -> asyncio.Task:
-        async def wrapped_coroutine():
-            try:
-                await callback()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                exception_handler(exc)
-
-        task = self._loop.create_task(wrapped_coroutine())
-        task.add_done_callback(self._tasks.remove)
-        self._tasks.add(task)
-        return task
-    
-    def cancel_all(self) -> None:
-        for task in self._tasks:
-            task.cancel()
-
-    @property
-    def task_count(self) -> int:
-        return len(self._tasks)
-    
-    def wait_for_pending_tasks_to_finish(self, timeout_sec: Optional[float] = None) -> bool:
-        if not self.task_count:
-            return True
-        
-        _, pending = self._loop.run_until_complete(
-            asyncio.wait(list(self._tasks), timeout=timeout_sec)
-        )
-        return not pending
-
-
 class TimerHandler:
     def __init__(
         self,
         timer: Timer,
         loop: asyncio.AbstractEventLoop,
-        task_handler: TaskHandler,
+        schedule_callback: Callable,
     ) -> None:
         self._timer = timer
         self._loop = loop
-        self._task_handler = task_handler
+        self._schedule_callback = schedule_callback
 
         self._call_later_handle: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
@@ -168,7 +129,7 @@ class TimerHandler:
             with self._timer.handle:
                 self._timer.handle.call_timer()
 
-            self._task_handler.create_task(
+            self._schedule_callback(
                 partial(await_or_execute, self._timer.callback),
                 traceback.print_exception
             )
@@ -190,7 +151,8 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._context = context or get_default_context()
         self._context.on_shutdown(self.shutdown)
 
-        self._task_handler = TaskHandler(self._loop)
+        self._ready_tasks: asyncio.Queue = asyncio.Queue()
+        self._tasks: Set[Task] = set()
         self._nodes: Set[Node] = set()
         self._subscriptions: Set[Subscription] = set()
         self._clients: Set[Client] = set()
@@ -226,27 +188,27 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     ) -> None:
         self.shutdown()
 
-    def shutdown(self, timeout_sec: Optional[float] = None, close_loop: bool = True) -> bool:
+    def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
         """Clear all nodes and close the event loop."""
         self._nodes.clear()
         self._update_entities_from_nodes()
 
-        self._task_handler.cancel_all()
+        while not self._ready_tasks.empty():
+            self._ready_tasks.get_nowait()
 
-        if self._loop.is_running():
-            if not self._task_handler.task_count:
-                self._loop.stop()
-                return True
-
-            return False
-
-        if not self._task_handler.wait_for_pending_tasks_to_finish(timeout_sec):
-            return False
-
-        if not self._loop.is_closed() and close_loop:
+        for _ in range(len(self._tasks)):
+            task = self._tasks.pop()
+            task.cancel()
+        
+        return True
+    
+    def __del__(self):
+        self.shutdown()
+        if not self._loop.is_closed():
             self._loop.close()
 
-        return True
+    def _resume_task(self, task: Task):
+        self._ready_tasks.put_nowait(task)
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
@@ -256,71 +218,56 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             asyncio.set_event_loop(loop)
             return loop
 
-    @contextmanager
-    def _timeout(self, timeout: int) -> Generator[None, None, None]:
-        handle = self._loop.call_later(timeout, self._loop.stop)
-        yield
+    async def spin_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
+        timeout = time.time() + timeout_sec
+        while self.context.ok():
+            await self.spin_once_async(future=future, timeout_sec=timeout-time.time())
+            
+            if future and not (future.done() or future.cancelled()):
+                break
+            if timeout_sec and (time.time() > timeout):
+                break
 
-        if handle.when() > time.time():
-            handle.cancel()
+    async def spin_once_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
+        callback_getter = self._loop.create_task(self._ready_tasks.get())
+        fs = [callback_getter]
+        if future:
+            fs.append(future)
 
-    @contextmanager
-    def _stop_after_callback(self) -> Generator[None, None, None]:
-        self._should_stop_after_callback = True
-
-        yield
-
-        self._should_stop_after_callback = False
-        if self._stop_handle:
-            self._stop_handle.cancel()
-            self._stop_handle = None
-
-    def _on_future_complete(self, _: asyncio.Future):
-        self._loop.stop()
-
-    def spin(
-        self,
-        once: bool = False,
-        future: Optional[asyncio.Future] = None,
-        timeout: Optional[float] = None,
-    ) -> None:
-        if not self._context.ok():
-            return
-
-        with ExitStack() as context:
-            if once:
-                context.enter_context(self._stop_after_callback())
-            if timeout is not None:
-                context.enter_context(self._timeout(timeout))
-            if future is not None:
-                future.add_done_callback(self._on_future_complete)
-
-            self._loop.run_forever()
+        done, pending = await asyncio.wait(fs, timeout=timeout_sec)    
+        
+        if callback_getter.done():
+            callback_getter.result()()
+        else:
+            callback_getter.cancel()
 
         if not self._context.ok():
             raise ExternalShutdownException()
 
+    def spin(self) -> None:
+        self._loop.run_until_complete(self.spin_async())
+
     def spin_once(self, timeout_sec: Optional[float] = None) -> None:
-        self.spin(once=True, timeout=timeout_sec)
+        self._loop.run_until_complete(self.spin_once_async(timeout_sec=timeout_sec))
 
     def spin_once_until_future_complete(
         self, future: asyncio.Future, timeout_sec: Optional[float] = None
     ) -> None:
-        self.spin(once=True, future=future, timeout=timeout_sec)
+        self._loop.run_until_complete(self.spin_once_async(future=future, timeout_sec=timeout_sec))
 
-    # TODO: should this function accept an asyncio Future or an rclpy Future?
     def spin_until_future_complete(
         self, future: asyncio.Future, timeout_sec: Optional[float] = None
     ) -> None:
-        self.spin(future=future, timeout=timeout_sec)
+        self._loop.run_until_complete(self.spin_async(future=future, timeout_sec=timeout_sec))
 
     def create_task(
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
-    ) -> asyncio.Task:
-        if not asyncio.iscoroutine(callback):
-            callback = await_or_execute(callback, *args, **kwargs)
-
-        return self._loop.create_task(callback)
+    ) -> Task:
+        task = Task(callback, args, kwargs, self)
+        task.add_done_callback(self._tasks.remove)
+        self._tasks.add(task)
+        self._ready_tasks.put_nowait(task)
+        return task
 
     def wake(self) -> None:
         self._update_entities_from_nodes()
@@ -346,7 +293,6 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
         return asyncio_future
 
-    # TODO: optimize this function to run less times?
     def _update_entities_from_nodes(self) -> None:
         subscriptions, clients, services, timers = set(), set(), set(), set()
         for node in self._nodes:
@@ -384,7 +330,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         )
 
     def _handle_added_timer(self, timer: Timer):
-        handler = TimerHandler(timer, self._loop, self._task_handler)
+        handler = TimerHandler(timer, self._loop, self._schedule_ready_callback)
         self._timer_handlers[timer] = handler
         timer.set_on_reset_callback(handler.on_reset)
 
@@ -439,18 +385,27 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         entity: EntityT,
         number_of_events: int,
     ) -> None:
-        if not self._context.ok():
-            raise ExternalShutdownException()
-
         for _ in range(number_of_events):
             callback = take_entity_callback(entity)
             if not callback:
                 break
 
-            self._task_handler.create_task(
+            self._schedule_ready_callback(
                 callback,
                 lambda exc: get_logger(entity.get_logger_name()).error("".join(traceback.format_exception(exc)))
             )
 
-        if self._should_stop_after_callback and not self._stop_handle:
-            self._stop_handle = self._loop.call_soon(self._loop.stop)
+    def _schedule_ready_callback(
+        self,
+        callback: Callable[[], Coroutine],
+        exception_handler: Callable[[Exception], None]
+    ) -> None:
+        async def wrapped_coroutine():
+            try:
+                await callback()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                exception_handler(exc)
+
+        self.create_task(wrapped_coroutine)
