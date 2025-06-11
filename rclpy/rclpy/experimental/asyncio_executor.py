@@ -159,10 +159,8 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         self._services: Set[Service] = set()
         self._timers: Set[Timer] = set()
         self._timer_handlers: Dict[Timer, TimerHandler] = {}
-
-        self._should_stop_after_callback = False
-        self._stop_handle: Optional[asyncio.Handle] = None
-        self._update_timers_handle: Optional[asyncio.Handle] = None
+        self._shutdown_event = asyncio.Event()
+        self._shutdown_waiter = self._loop.create_task(self._shutdown_event.wait())
 
     def get_nodes(self) -> List['Node']:
         """Return nodes that have been added to this executor."""
@@ -190,6 +188,9 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
     def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
         """Clear all nodes and close the event loop."""
+        self._shutdown_event.set()
+        self._shutdown_waiter.cancel()
+        
         self._nodes.clear()
         self._update_entities_from_nodes()
 
@@ -199,9 +200,16 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         for _ in range(len(self._tasks)):
             task = self._tasks.pop()
             task.cancel()
-        
-        return True
-    
+
+        if not self._loop.is_running() and not self._loop.is_closed():
+            try:
+                self._loop.run_until_complete(
+                    asyncio.wait_for(self._shutdown_waiter, timeout=timeout_sec))
+            except asyncio.CancelledError:
+                pass
+
+        return self._shutdown_waiter.cancelled()
+
     def __del__(self):
         self.shutdown()
         if not self._loop.is_closed():
@@ -219,30 +227,48 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
             return loop
 
     async def spin_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
-        timeout = time.time() + timeout_sec
-        while self.context.ok():
-            await self.spin_once_async(future=future, timeout_sec=timeout-time.time())
+        timeout = None
+        timeout_epoch = time.time() + timeout_sec if timeout_sec is not None else None
+        while self.context.ok() and not self._shutdown_event.is_set():
+            if timeout_epoch:
+                timeout = timeout_epoch - time.time()
+            await self.spin_once_async(future=future, timeout_sec=timeout)
             
-            if future and not (future.done() or future.cancelled()):
+            if future and (future.done() or future.cancelled()):
                 break
-            if timeout_sec and (time.time() > timeout):
+            if timeout_epoch and (time.time() > timeout_epoch):
                 break
 
     async def spin_once_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
-        callback_getter = self._loop.create_task(self._ready_tasks.get())
-        fs = [callback_getter]
-        if future:
-            fs.append(future)
-
-        done, pending = await asyncio.wait(fs, timeout=timeout_sec)    
+        if self._shutdown_event.is_set():
+            return
         
-        if callback_getter.done():
-            callback_getter.result()()
-        else:
-            callback_getter.cancel()
+        ready_task_getter = self._loop.create_task(self._ready_tasks.get())
+        futures_to_wait = [self._shutdown_waiter, ready_task_getter]
 
-        if not self._context.ok():
-            raise ExternalShutdownException()
+        if future:
+            futures_to_wait.append(future)
+            
+        done, pending = await asyncio.wait(futures_to_wait, timeout=timeout_sec, return_when=asyncio.FIRST_COMPLETED)
+
+        try:
+            if self._shutdown_waiter in done:
+                return
+
+            if not self._context.ok():
+                raise ExternalShutdownException()
+            
+            if ready_task_getter in done:
+                task = ready_task_getter.result()
+                task()
+        finally:
+            if ready_task_getter in pending:
+                ready_task_getter.cancel()
+            
+            try:
+                await ready_task_getter
+            except asyncio.CancelledError:
+                pass
 
     def spin(self) -> None:
         self._loop.run_until_complete(self.spin_async())
@@ -263,7 +289,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def create_task(
         self, callback: Union[Callable, Coroutine], *args: Any, **kwargs: Any
     ) -> Task:
-        task = Task(callback, args, kwargs, self)
+        task = Task(handler=callback, args=args, kwargs=kwargs, executor=self)
         task.add_done_callback(self._tasks.remove)
         self._tasks.add(task)
         self._ready_tasks.put_nowait(task)

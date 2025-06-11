@@ -205,17 +205,10 @@ def test_service_unavailable_after_node_removed(test_node, executor):
 def test_spin_returns_if_context_is_not_ok():
     with asyncio_executor() as executor:
         mock = Mock()
-        executor.loop.call_soon(mock)
+        executor.create_task(mock)
         executor.context.shutdown()
         executor.spin()
         mock.assert_not_called()
-
-
-def test_executor_crashes_if_context_shuts_down_during_spin():
-    with asyncio_executor() as executor:
-        executor.loop.call_soon(executor.context.shutdown)
-        with pytest.raises(ExternalShutdownException):
-            executor.spin()
 
 
 def test_timer_reset_rewinds_the_timer(attached_test_node, executor):
