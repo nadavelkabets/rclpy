@@ -211,7 +211,7 @@ class AsyncioClock(ROSClock):
             waiter.cancel()
 
 
-class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
+class AsyncioExecutor(BaseExecutor):
     def __init__(
         self, loop: Optional[asyncio.AbstractEventLoop] = None,
         *,
@@ -381,11 +381,6 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
 
         self._nodes.remove(node)
         self._update_entities_from_nodes()
-
-    def create_future(self) -> asyncio.Future:
-        asyncio_future = self._loop.create_future()
-
-        return asyncio_future
     
     def wrap_future(self, rclpy_future: Future) -> asyncio.Future:
         """
@@ -395,7 +390,7 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
         If destination is cancelled, source gets cancelled too.
         """
 
-        asyncio_future = self.create_future()
+        asyncio_future = self._loop.create_future()
         def _call_check_cancel(_: asyncio.Future):
             if asyncio_future.cancelled():
                 rclpy_future.cancel()

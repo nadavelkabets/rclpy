@@ -65,8 +65,6 @@ from rclpy.waitable import Waitable
 # TODO(jacobperron): Make all entities implement the 'Waitable' interface for better type checking
 
 T = TypeVar('T')
-TaskT = TypeVar('TaskT')
-FutureT = TypeVar('FutureT')
 
 # Avoid import cycle
 if TYPE_CHECKING:
@@ -181,7 +179,7 @@ class TimeoutObject:
         self._timeout = timeout
 
 
-class AbstractExecutor(Generic[FutureT, TaskT]):
+class AbstractExecutor:
 
     @property
     def context(self) -> Context:
@@ -198,7 +196,7 @@ class AbstractExecutor(Generic[FutureT, TaskT]):
 
     def spin_until_future_complete(
         self,
-        future: FutureT,
+        future: Future[Any],
         timeout_sec: Optional[float] = None
     ) -> None:
         raise NotImplementedError()
@@ -218,10 +216,10 @@ class AbstractExecutor(Generic[FutureT, TaskT]):
         callback: Union[Callable, Coroutine],
         *args: Any,
         **kwargs: Any
-    ) -> TaskT:
+    ) -> Task[Any]:
         raise NotImplementedError()
 
-    def create_future(self) -> FutureT:
+    def create_future(self) -> Future[Any]:
         raise NotImplementedError()
 
     def add_node(self, node: 'Node') -> bool:
@@ -234,7 +232,10 @@ class AbstractExecutor(Generic[FutureT, TaskT]):
         raise NotImplementedError()
 
 
-class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
+class BaseExecutor(AbstractExecutor):
+    def create_future(self) -> Future:
+        return Future(executor=self)
+    
     def _take_subscription(
             self,
             sub: Subscription[Any]
@@ -319,7 +320,7 @@ class BaseExecutor(AbstractExecutor[FutureT, TaskT], Generic[FutureT, TaskT]):
         return None
 
 
-class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
+class Executor(ContextManager['Executor'], BaseExecutor):
     """
     The base class for an executor.
 
@@ -968,9 +969,6 @@ class Executor(ContextManager['Executor'], BaseExecutor[Future, Task]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.shutdown()
-
-    def create_future(self) -> Future:
-        return Future(executor=self)
 
 
 class SingleThreadedExecutor(Executor):
