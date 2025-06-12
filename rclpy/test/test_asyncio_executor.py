@@ -30,7 +30,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
 from rclpy.time import Time
-from std_msgs.msg import String
+from test_msgs.msg import Strings
 from test_msgs.srv import BasicTypes
 
 
@@ -93,9 +93,9 @@ def test_rclpy_future_crashes_asyncio_task():
 
 def test_spin_once_returns_after_callback(executor, attached_test_node):
     mock = Mock()
-    msg = String(data='test')
-    attached_test_node.create_subscription(String, '/test', mock, 10)
-    pub = attached_test_node.create_publisher(String, '/test', 10)
+    msg = Strings(string_value='test')
+    attached_test_node.create_subscription(Strings, '/test', mock, 10)
+    pub = attached_test_node.create_publisher(Strings, '/test', 10)
     pub.publish(msg)
 
     start_time = time.time()
@@ -112,9 +112,9 @@ def test_spin_once_returns_after_timeout(executor):
 
 def test_executor_executes_existing_callback_from_initialized_node(test_node, executor):
     mock = Mock()
-    msg = String(data='test')
-    test_node.create_subscription(String, '/test', mock, 10)
-    pub = test_node.create_publisher(String, '/test', 10)
+    msg = Strings(string_value='test')
+    test_node.create_subscription(Strings, '/test', mock, 10)
+    pub = test_node.create_publisher(Strings, '/test', 10)
     pub.publish(msg)
     with attach_to_executor(test_node, executor):
         executor.spin_once(timeout_sec=0.3)
@@ -124,9 +124,9 @@ def test_executor_executes_existing_callback_from_initialized_node(test_node, ex
 
 def test_executor_discards_subscription_from_removed_node(test_node, executor):
     mock = Mock()
-    msg = String(data='test')
-    test_node.create_subscription(String, '/test', mock, 10)
-    pub = test_node.create_publisher(String, '/test', 10)
+    msg = Strings(string_value='test')
+    test_node.create_subscription(Strings, '/test', mock, 10)
+    pub = test_node.create_publisher(Strings, '/test', 10)
 
     with attach_to_executor(test_node, executor):
         executor.spin_once(timeout_sec=0)
@@ -164,10 +164,10 @@ def test_basic_service_call(executor, attached_test_node):
 def test_transient_local_subscriber_receives_queued_messages(test_node, executor):
     fut = executor.create_future()
     qos = QoSProfile(history=HistoryPolicy.KEEP_ALL, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    pub = test_node.create_publisher(String, '/test', qos)
+    pub = test_node.create_publisher(Strings, '/test', qos)
 
     for _ in range(5):
-        pub.publish(String(data='msg'))
+        pub.publish(Strings(string_value='test'))
 
     received = []
 
@@ -176,7 +176,7 @@ def test_transient_local_subscriber_receives_queued_messages(test_node, executor
         if len(received) == 5:
             fut.set_result(None)
 
-    test_node.create_subscription(String, '/test', callback, qos)
+    test_node.create_subscription(Strings, '/test', callback, qos)
 
     with attach_to_executor(test_node, executor):
         start_time = time.time()
