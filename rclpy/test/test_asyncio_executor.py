@@ -420,3 +420,41 @@ def test_rclpy_task_can_await_asyncio_task(attached_test_node, executor):
     task = executor.loop.create_task(coro())
     executor.spin_until_future_complete(task, timeout_sec=0.1)
     assert task.done() and task.result() == True
+
+
+def test_executor_immediate_shutdown(attached_test_node, executor):
+    got_callback = False
+
+    def timer_callback() -> None:
+        nonlocal got_callback
+        got_callback = True
+
+    tmr = attached_test_node.create_timer(1, timer_callback)
+    executor.create_task(executor.shutdown)
+    start_time = time.time()
+    executor.spin()
+    assert not got_callback
+    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)
+
+
+def test_create_task_during_spin(executor):
+    future = None
+    
+    def func():
+        nonlocal future
+        future = executor.create_task(lambda: 'Sentinel Result')
+
+    executor.loop.call_later(0.2, func)
+    executor.spin_once(timeout_sec=0.3)
+
+
+    assert future is not None
+    assert future.done()
+    assert future.result() == 'Sentinel Result'
+
+def test_add_node_wakes_executor(executor, test_node):
+    mock = Mock()
+    test_node.create_timer(0.2, mock)
+    executor.loop.call_later(0.1, executor.add_node, test_node)
+    executor.spin_once(timeout_sec=0.3)
+    mock.assert_called_once()
