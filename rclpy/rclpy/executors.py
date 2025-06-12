@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from collections import deque
 from functools import partial
 import inspect
 import os
@@ -22,10 +22,11 @@ from threading import Lock
 from threading import RLock
 import time
 from types import TracebackType
-from typing import Any, Generic
+from typing import Any
 from typing import Callable
 from typing import ContextManager
 from typing import Coroutine
+from typing import Deque
 from typing import Dict
 from typing import Generator
 from typing import List
@@ -37,7 +38,6 @@ from typing import Type
 from typing import TYPE_CHECKING
 from typing import TypeVar
 from typing import Union
-from typing import Deque
 
 import warnings
 
@@ -233,9 +233,10 @@ class AbstractExecutor:
 
 
 class BaseExecutor(AbstractExecutor):
+
     def create_future(self) -> Future:
         return Future(executor=self)
-    
+
     def _take_subscription(
             self,
             sub: Subscription[Any]
@@ -409,7 +410,6 @@ class Executor(ContextManager['Executor'], BaseExecutor):
             self._tasks.append((task, None, None))
             if self._guard:
                 self._guard.trigger()
-
 
     def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
         """

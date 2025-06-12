@@ -22,14 +22,13 @@ from unittest.mock import Mock
 import pytest
 import rclpy
 from rclpy.constants import S_TO_NS
-from rclpy.context import Context
+from rclpy.duration import Duration
 from rclpy.executors import AbstractExecutor, ExternalShutdownException
-from rclpy.experimental.asyncio_executor import AsyncioExecutor, AsyncioClock
+from rclpy.experimental.asyncio_executor import AsyncioClock, AsyncioExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
-from rclpy.parameter import Parameter
-from rclpy.duration import Duration
 from rclpy.time import Time
 from std_msgs.msg import String
 from test_msgs.srv import BasicTypes
@@ -157,7 +156,7 @@ def test_basic_service_call(executor, attached_test_node):
     fut = client.call_async(BasicTypes.Request(bool_value=True))
     start_time = time.time()
     executor.spin_until_future_complete(fut, timeout_sec=0.3)
-    assert fut.done() 
+    assert fut.done()
     assert fut.result().string_value == 'True'
     assert math.isclose(time.time() - start_time, 0, abs_tol=0.1)
 
@@ -202,7 +201,6 @@ def test_service_unavailable_after_node_removed(test_node, executor):
         executor.spin_until_future_complete(fut, timeout_sec=0.3)
         assert fut.result().bool_value is True
         assert math.isclose(time.time() - start_time, 0, abs_tol=0.1)
-
 
     fut2 = client.call_async(BasicTypes.Request())
     start_time = time.time()
@@ -265,7 +263,7 @@ def test_timer_fires_when_ros_time_is_active(attached_test_node, executor):
     def cb():
         future.set_result(None)
 
-    timer = attached_test_node.create_timer(0.3, cb)
+    attached_test_node.create_timer(0.3, cb)
 
     attached_test_node.get_clock().set_ros_time_override(Time(nanoseconds=int(0.25 * S_TO_NS)))
     executor.spin_once(timeout_sec=0.1)
@@ -297,7 +295,7 @@ def test_timer_destroy_prevents_callback(attached_test_node, executor):
 
     timer = attached_test_node.create_timer(0.1, cb)
     executor.loop.call_soon(attached_test_node.destroy_timer, timer)
-    
+
     executor.spin_until_future_complete(fut, timeout_sec=0.3)
     assert not fut.done()
 
@@ -331,7 +329,7 @@ def test_sleep_until_async_system_time(asyncio_loop):
 
 def test_sleep_until_async_respects_ros_time(test_node, executor):
     test_node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
-    clock = test_node.get_clock()    
+    clock = test_node.get_clock()
     clock.set_ros_time_override(Time(nanoseconds=0))
 
     async def sleep_coro():
@@ -346,31 +344,33 @@ def test_sleep_until_async_respects_ros_time(test_node, executor):
     )
 
     executor.spin_until_future_complete(task)
-    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)    
+    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)
     assert task.done()
 
 
 def test_sleep_until_async_ros_time(test_node, asyncio_loop):
     test_node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
-    clock = test_node.get_clock()    
+    clock = test_node.get_clock()
     clock.set_ros_time_override(Time(nanoseconds=0))
 
     async def coro():
         target = Time(nanoseconds=int(0.5 * S_TO_NS), clock_type=clock.clock_type)
         fut = asyncio_loop.create_task(clock.sleep_until_async(target))
         assert not fut.done()
-        clock.set_ros_time_override(Time(nanoseconds=int(0.5 * S_TO_NS), clock_type=clock.clock_type))
+        clock.set_ros_time_override(
+            Time(nanoseconds=int(0.5 * S_TO_NS), clock_type=clock.clock_type)
+        )
         return await fut
-    
+
     start_time = time.time()
     done = asyncio_loop.run_until_complete(coro())
-    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)    
+    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)
     assert done is True
 
 
 def test_sleep_for_async_ros_time(test_node, executor):
     test_node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
-    clock: AsyncioClock = test_node.get_clock()    
+    clock: AsyncioClock = test_node.get_clock()
     clock.set_ros_time_override(Time(nanoseconds=0, clock_type=clock.clock_type))
 
     async def coro():
@@ -379,11 +379,11 @@ def test_sleep_for_async_ros_time(test_node, executor):
         assert not fut.done()
         clock.set_ros_time_override(Time(nanoseconds=0.2 * S_TO_NS, clock_type=clock.clock_type))
         await fut
-    
+
     start_time = time.time()
     task = executor.create_task(coro())
-    done = executor.spin_until_future_complete(task)
-    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)    
+    executor.spin_until_future_complete(task)
+    assert math.isclose(time.time() - start_time, 0, abs_tol=0.01)
     assert task.done()
 
 
@@ -394,10 +394,10 @@ def test_wrapped_future_is_done_when_future_is_done(executor):
         return await executor.wrap_future(ros_fut)
 
     task = executor.create_task(test_coro())
-    executor.loop.call_soon(ros_fut.set_result, "finished")
+    executor.loop.call_soon(ros_fut.set_result, 'finished')
 
     executor.spin_until_future_complete(task, timeout_sec=0.3)
-    assert task.result() == "finished"
+    assert task.result() == 'finished'
 
 
 def test_wrapped_future_is_cancelled_when_future_is_cancelled(executor):
@@ -419,7 +419,8 @@ def test_rclpy_task_can_await_asyncio_task(attached_test_node, executor):
 
     task = executor.loop.create_task(coro())
     executor.spin_until_future_complete(task, timeout_sec=0.1)
-    assert task.done() and task.result() == True
+    assert task.done()
+    assert task.result()
 
 
 def test_executor_immediate_shutdown(attached_test_node, executor):
@@ -429,7 +430,7 @@ def test_executor_immediate_shutdown(attached_test_node, executor):
         nonlocal got_callback
         got_callback = True
 
-    tmr = attached_test_node.create_timer(1, timer_callback)
+    attached_test_node.create_timer(1, timer_callback)
     executor.create_task(executor.shutdown)
     start_time = time.time()
     executor.spin()
@@ -439,7 +440,7 @@ def test_executor_immediate_shutdown(attached_test_node, executor):
 
 def test_create_task_during_spin(executor):
     future = None
-    
+
     def func():
         nonlocal future
         future = executor.create_task(lambda: 'Sentinel Result')
@@ -447,10 +448,10 @@ def test_create_task_during_spin(executor):
     executor.loop.call_later(0.2, func)
     executor.spin_once(timeout_sec=0.3)
 
-
     assert future is not None
     assert future.done()
     assert future.result() == 'Sentinel Result'
+
 
 def test_add_node_wakes_executor(executor, test_node):
     mock = Mock()

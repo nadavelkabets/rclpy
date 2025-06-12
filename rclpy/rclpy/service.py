@@ -43,7 +43,7 @@ class Service(Generic[SrvRequestT, SrvResponseT]):
         srv_name: str,
         callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
         callback_group: CallbackGroup,
-        qos_profile: QoSProfile,
+        qos_profile: QoSProfile
     ) -> None:
         """
         Create a container for a ROS service server.

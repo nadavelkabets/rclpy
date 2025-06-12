@@ -47,7 +47,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
         srv_type: Type[Srv],
         srv_name: str,
         qos_profile: QoSProfile,
-        callback_group: CallbackGroup,
+        callback_group: CallbackGroup
     ) -> None:
         """
         Create a container for a ROS service client.

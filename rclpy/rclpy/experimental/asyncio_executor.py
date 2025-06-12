@@ -13,36 +13,45 @@
 # limitations under the License.
 
 import asyncio
-import inspect
 from functools import partial
-from sys import exc_info, stderr
+from sys import stderr
 import time
 import traceback
-from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
-                    Type, TypeVar, Union)
+from typing import Any
+from typing import Callable
+from typing import Coroutine
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Type
+from typing import TypeVar
+from typing import Union
 
-from rclpy.exceptions import NotInitializedException
-from rclpy.task import Task
 from rclpy.client import Client
 from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, ROSClock, TimeJump
 from rclpy.constants import S_TO_NS
 from rclpy.context import Context
 from rclpy.duration import Duration
-from rclpy.executors import (await_or_execute, BaseExecutor, ExternalShutdownException,
-                             TracebackType)
+from rclpy.executors import await_or_execute
+from rclpy.executors import BaseExecutor
+from rclpy.executors import ExternalShutdownException
+from rclpy.executors import TracebackType
 from rclpy.logging import get_logger
 from rclpy.node import Node
 from rclpy.service import Service
 from rclpy.subscription import Subscription
+from rclpy.task import Future
+from rclpy.task import Task
+from rclpy.time import Time
 from rclpy.timer import Timer
 from rclpy.utilities import get_default_context
-from rclpy.time import Time
-from rclpy.task import Future
 
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
 class _WaitHandler:
+
     def __init__(
         self,
         clock: ROSClock,
@@ -92,7 +101,9 @@ class _WaitHandler:
 
     def _register_jump_handle(self) -> None:
         threshold = JumpThreshold(min_forward=Duration(nanoseconds=1), min_backward=None)
-        self._jump_handle = self._clock.create_jump_callback(threshold, post_callback=self._on_jump)
+        self._jump_handle = self._clock.create_jump_callback(
+            threshold, post_callback=self._on_jump
+        )
 
     def _on_jump(self, jump: TimeJump) -> None:
         if self._is_finished():
@@ -104,7 +115,7 @@ class _WaitHandler:
         ):
             self.cancel()
             print(
-                f"Cancelling callback due to clock change: {jump.clock_change}",
+                f'Cancelling callback due to clock change: {jump.clock_change}',
                 file=stderr
             )
             return
@@ -115,6 +126,7 @@ class _WaitHandler:
 
 
 class _TimerHandler:
+
     def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop, schedule_cb) -> None:
         self._timer = timer
         self._schedule_cb = schedule_cb
@@ -158,7 +170,14 @@ class _TimerHandler:
 
 
 class _SleepWaiter:
-    def __init__(self, clock: ROSClock, until: Time, loop: asyncio.AbstractEventLoop, fut: asyncio.Future) -> None:
+
+    def __init__(
+        self,
+        clock: ROSClock,
+        until: Time,
+        loop: asyncio.AbstractEventLoop,
+        fut: asyncio.Future
+    ) -> None:
         self._clock = clock
         self._until = until
         self._fut = fut
@@ -194,7 +213,9 @@ class _SleepWaiter:
 
 
 class AsyncioClock(ROSClock):
-    async def sleep_for_async(self, rel_time: Duration, *, context: Optional[Context] = None) -> bool:
+    async def sleep_for_async(
+        self, rel_time: Duration, *, context: Optional[Context] = None
+    ) -> bool:
         return await self.sleep_until_async(self.now() + rel_time, context=context)
 
     async def sleep_until_async(self, until: Time, *, context: Optional[Context] = None) -> bool:
@@ -286,23 +307,31 @@ class AsyncioExecutor(BaseExecutor):
             asyncio.set_event_loop(loop)
             return loop
 
-    async def spin_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
+    async def spin_async(
+        self,
+        future: Optional[asyncio.Future] = None,
+        timeout_sec: Optional[float] = None
+    ):
         timeout = None
         timeout_epoch = time.time() + timeout_sec if timeout_sec is not None else None
         while self.context.ok() and not self._shutdown_fut.done():
             if timeout_epoch:
                 timeout = timeout_epoch - time.time()
             await self.spin_once_async(future=future, timeout_sec=timeout)
-            
+
             if future and (future.done() or future.cancelled()):
                 break
             if timeout_epoch and (time.time() > timeout_epoch):
                 break
 
-    async def spin_once_async(self, future: Optional[asyncio.Future] = None, timeout_sec: Optional[float] = None):
+    async def spin_once_async(
+        self,
+        future: Optional[asyncio.Future] = None,
+        timeout_sec: Optional[float] = None
+    ):
         if self._shutdown_fut.done():
             return
-        
+
         task = None
         try:
             task = self._ready_tasks.get_nowait()
@@ -312,8 +341,12 @@ class AsyncioExecutor(BaseExecutor):
 
             if future:
                 futures_to_wait.append(future)
-                
-            done, pending = await asyncio.wait(futures_to_wait, timeout=timeout_sec, return_when=asyncio.FIRST_COMPLETED)
+
+            done, pending = await asyncio.wait(
+                futures_to_wait,
+                timeout=timeout_sec,
+                return_when=asyncio.FIRST_COMPLETED
+            )
 
             if ready_task_getter in pending:
                 ready_task_getter.cancel()
@@ -325,7 +358,7 @@ class AsyncioExecutor(BaseExecutor):
 
             if self._shutdown_fut in done:
                 return
-        
+
             task = ready_task_getter.result()
         finally:
             if not self._context.ok():
@@ -379,7 +412,7 @@ class AsyncioExecutor(BaseExecutor):
 
         self._nodes.remove(node)
         self._update_entities_from_nodes()
-    
+
     def wrap_future(self, rclpy_future: Future) -> asyncio.Future:
         """
         Chain two futures so that when one completes, so does the other.
@@ -387,8 +420,8 @@ class AsyncioExecutor(BaseExecutor):
         The result (or exception) of source will be copied to destination.
         If destination is cancelled, source gets cancelled too.
         """
-
         asyncio_future = self._loop.create_future()
+
         def _call_check_cancel(_: asyncio.Future):
             if asyncio_future.cancelled():
                 rclpy_future.cancel()
@@ -509,7 +542,9 @@ class AsyncioExecutor(BaseExecutor):
 
             self._schedule_ready_callback(
                 callback,
-                lambda exc: get_logger(entity.get_logger_name()).error("".join(traceback.format_exception(exc)))
+                lambda exc: get_logger(
+                        entity.get_logger_name()
+                    ).error(''.join(traceback.format_exception(exc)))
             )
 
     def _schedule_ready_callback(

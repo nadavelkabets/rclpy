@@ -1760,7 +1760,8 @@ class Node:
 
         client: Client[SrvRequestT, SrvResponseT] = Client(
             self.context,
-            client_impl, srv_type, srv_name, qos_profile, callback_group)
+            client_impl, srv_type, srv_name, qos_profile,
+            callback_group)
         callback_group.add_entity(client)
         self._clients.append(client)
         self._wake_executor()

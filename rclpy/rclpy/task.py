@@ -304,7 +304,7 @@ class Task(Future[T]):
                 try:
                     future = handler.send(None)
                     executor = self._executor()
-                    if executor and hasattr(executor, "_resume_task"):
+                    if executor and hasattr(executor, '_resume_task'):
                         if future:
                             future.add_done_callback(self.__wake)
                             self._fut_waiter = future
@@ -333,11 +333,12 @@ class Task(Future[T]):
     def __wake(self, fut: Future):
         self._fut_waiter = None
         if fut.cancelled():
-            self.cancel()        
-        elif exception:= fut.exception() is not None:
-            self.set_exception(exception)
+            self.cancel()
+        elif fut.exception() is not None:
+            self.set_exception(fut.exception())
         else:
             self()
+
     def _complete_task(self) -> None:
         """Cleanup after task finished."""
         self._handler = None
@@ -356,7 +357,7 @@ class Task(Future[T]):
         if self._fut_waiter:
             self._fut_waiter.cancel()
             return
-        
+
         if self._pending() and inspect.iscoroutine(self._handler):
             self._handler.close()
 

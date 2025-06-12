@@ -73,7 +73,7 @@ class Timer:
         clock: Clock,
         *,
         context: Optional[Context] = None,
-        autostart: bool = True,
+        autostart: bool = True
     ) -> None:
         """
         Create a Timer.
