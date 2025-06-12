@@ -161,7 +161,7 @@ class Clock:
                 clock_type: ClockType = ClockType.SYSTEM_TIME) -> 'Clock':
         if not isinstance(clock_type, ClockType):
             raise TypeError('Clock type must be a ClockType enum')
-        if clock_type is ClockType.ROS_TIME:
+        if clock_type is ClockType.ROS_TIME and cls is Clock:
             self: 'Clock' = super().__new__(ROSClock)
         else:
             self = super().__new__(cls)
@@ -316,9 +316,7 @@ class Clock:
 class ROSClock(Clock):
 
     def __new__(cls) -> 'ROSClock':
-        self = super().__new__(Clock, clock_type=ClockType.ROS_TIME)
-        assert isinstance(self, ROSClock)
-        return self
+        return super().__new__(cls, clock_type=ClockType.ROS_TIME)
 
     @property
     def ros_time_is_active(self) -> bool:

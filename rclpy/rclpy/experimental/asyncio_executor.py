@@ -21,6 +21,7 @@ import traceback
 from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
                     Type, TypeVar, Union)
 
+from rclpy.exceptions import NotInitializedException
 from rclpy.task import Task
 from rclpy.client import Client
 from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, ROSClock, TimeJump
@@ -35,109 +36,178 @@ from rclpy.service import Service
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
 from rclpy.utilities import get_default_context
+from rclpy.time import Time
 
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
-class TimerHandler:
+class WaitHandler:
     def __init__(
         self,
-        timer: Timer,
+        clock: ROSClock,
         loop: asyncio.AbstractEventLoop,
-        schedule_callback: Callable,
+        is_finished: Callable[[], bool],
+        is_ready: Callable[[], bool],
+        time_until_ready_sec: Callable[[], float],
+        on_ready: Callable[[], None],
     ) -> None:
-        self._timer = timer
+        self._clock = clock
         self._loop = loop
-        self._schedule_callback = schedule_callback
-
-        self._call_later_handle: Optional[asyncio.TimerHandle] = None
+        self._is_finished = is_finished
+        self._is_ready = is_ready
+        self._time_until_ready_sec = time_until_ready_sec
+        self._on_ready = on_ready
+        self._call_later: Optional[asyncio.TimerHandle] = None
         self._jump_handle: Optional[JumpHandle] = None
-
-        if self._is_finished():
-            return
-
         self._register_jump_handle()
-        if not self._ros_time_is_active():
-            self._schedule_next_call()
+        self._process()
 
-    def on_remove(self) -> None:
-        self._cancel_call_later()
-        self._unregister_jump_handle()
-
-    def on_reset(self, _: int = None) -> None:
-        self._cancel_call_later()
-        self._register_jump_handle()
-        if not self._ros_time_is_active():
-            self._schedule_next_call()
-
-    def _cancel_call_later(self) -> None:
-        if self._call_later_handle:
-            self._call_later_handle.cancel()
-            self._call_later_handle = None
-
-    def _ros_time_is_active(self) -> bool:
-        return isinstance(self._timer.clock, ROSClock) and self._timer.clock.ros_time_is_active
-
-    def _register_jump_handle(self) -> None:
-        if not self._jump_handle:
-            threshold = JumpThreshold(min_forward=Duration(nanoseconds=1), min_backward=None)
-            self._jump_handle = self._timer.clock.create_jump_callback(
-                threshold,
-                post_callback=self._on_time_jump
-            )
-
-    def _unregister_jump_handle(self) -> None:
+    def cancel(self) -> None:
+        if self._call_later:
+            self._call_later.cancel()
+            self._call_later = None
         if self._jump_handle:
             self._jump_handle.unregister()
             self._jump_handle = None
 
-    def _on_time_jump(self, jump: TimeJump) -> None:
+    def _process(self) -> None:
         if self._is_finished():
+            self.cancel()
             return
 
-        if jump.clock_change == ClockChange.ROS_TIME_ACTIVATED:
-            self._cancel_call_later()
-        elif jump.clock_change == ClockChange.ROS_TIME_DEACTIVATED:
-            self._schedule_next_call()
-        else:
-            self._call_if_ready()
+        if self._is_ready():
+            self._on_ready()
+            if not self._is_finished() and not self._ros_time_active():
+                self._schedule()
 
-    def _loop_callback(self) -> None:
+        elif not self._ros_time_active():
+            self._schedule()
+
+    def _schedule(self) -> None:
+        if self._call_later:
+            self._call_later.cancel()
+        delay = max(self._time_until_ready_sec(), 0.0)
+        self._call_later = self._loop.call_later(delay, self._process)
+
+    def _register_jump_handle(self) -> None:
+        threshold = JumpThreshold(min_forward=Duration(nanoseconds=1), min_backward=None)
+        self._jump_handle = self._clock.create_jump_callback(threshold, post_callback=self._on_jump)
+
+    def _on_jump(self, jump: TimeJump) -> None:
         if self._is_finished():
+            self.cancel()
             return
+        if jump.clock_change in (
+            ClockChange.ROS_TIME_ACTIVATED,
+            ClockChange.ROS_TIME_DEACTIVATED,
+        ):
+            self.cancel()
+            return
+        self._process()
 
-        self._call_if_ready()
-        self._schedule_next_call()
+    def _ros_time_active(self) -> bool:
+        return isinstance(self._clock, ROSClock) and self._clock.ros_time_is_active
 
-    def _is_finished(self) -> bool:
-        if self._is_timer_destroyed() or self._timer.is_canceled():
-            self._cancel_call_later()
-            self._unregister_jump_handle()
-            return True
 
-        return False
+class TimerHandler:
+    def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop, schedule_cb) -> None:
+        self._timer = timer
+        self._schedule_cb = schedule_cb
+        self._loop = loop
+        self._build_waiter()
+        self._timer.set_on_reset_callback(self.on_reset)
 
-    def _schedule_next_call(self) -> None:
-        self._call_later_handle = self._loop.call_later(
-            self._time_until_next_call_sec(),
-            self._loop_callback
+    def _build_waiter(self) -> None:
+        self._waiter = WaitHandler(
+            clock=self._timer.clock,
+            loop=self._loop,
+            is_finished=self._finished,
+            is_ready=self._ready,
+            time_until_ready_sec=self._time_until_ready,
+            on_ready=self._on_ready,
         )
 
-    def _call_if_ready(self) -> float:
-        if self._timer.is_ready():
-            with self._timer.handle:
-                self._timer.handle.call_timer()
+    def _finished(self) -> bool:
+        return self._timer.handle.pointer == 0 or self._timer.is_canceled()
 
-            self._schedule_callback(
-                partial(await_or_execute, self._timer.callback),
-                traceback.print_exception
-            )
+    def _ready(self) -> bool:
+        return self._timer.is_ready()
 
-    def _time_until_next_call_sec(self):
-        return self._timer.time_until_next_call() / S_TO_NS 
+    def _time_until_ready(self) -> float:
+        return self._timer.time_until_next_call() / S_TO_NS
 
-    def _is_timer_destroyed(self) -> bool:
-        return self._timer.handle.pointer == 0
+    def _on_ready(self) -> None:
+        with self._timer.handle:
+            self._timer.handle.call_timer()
+        self._schedule_cb(
+            partial(await_or_execute, self._timer.callback),
+            traceback.print_exception,
+        )
+
+    def on_remove(self) -> None:
+        self._waiter.cancel()
+
+    def on_reset(self, _: int = None) -> None:
+        self._waiter.cancel()
+        self._build_waiter()
+
+
+class _SleepWaiter:
+    def __init__(self, clock: ROSClock, until: Time, loop: asyncio.AbstractEventLoop, fut: asyncio.Future, ctx: Context) -> None:
+        self._clock = clock
+        self._until = until
+        self._fut = fut
+        self._ctx = ctx
+        self._waiter = WaitHandler(
+            clock=clock,
+            loop=loop,
+            is_finished=self._finished,
+            is_ready=self._ready,
+            time_until_ready_sec=self._time_until_ready,
+            on_ready=self._on_ready,
+        )
+        ctx.on_shutdown(self._on_shutdown)
+
+    def _on_shutdown(self) -> None:
+        if not self._fut.done():
+            self._fut.set_result(False)
+        self._waiter.cancel()
+
+    def _finished(self) -> bool:
+        return self._fut.done()
+
+    def _ready(self) -> bool:
+        return self._clock.now() >= self._until
+
+    def _time_until_ready(self) -> float:
+        return (self._until - self._clock.now()).nanoseconds / S_TO_NS
+
+    def _on_ready(self) -> None:
+        if not self._fut.done():
+            self._fut.set_result(True)
+
+    def cancel(self) -> None:
+        self._waiter.cancel()
+
+
+class AsyncioClock(ROSClock):
+    async def sleep_for_async(self, rel_time: Duration, *, context: Optional[Context] = None) -> bool:
+        return await self.sleep_until_async(self.now() + rel_time, context=context)
+
+    async def sleep_until_async(self, until: Time, *, context: Optional[Context] = None) -> bool:
+        if context is None:
+            context = get_default_context()
+        if not context.ok():
+            raise NotInitializedException()
+        if until.clock_type != self.clock_type:
+            raise ValueError
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        waiter = _SleepWaiter(self, until, loop, fut, context)
+        try:
+            return await fut
+        finally:
+            waiter.cancel()
 
 
 class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):

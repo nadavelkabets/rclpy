@@ -22,8 +22,9 @@ from unittest.mock import Mock
 import pytest
 import rclpy
 from rclpy.constants import S_TO_NS
+from rclpy.context import Context
 from rclpy.executors import AbstractExecutor, ExternalShutdownException
-from rclpy.experimental.asyncio_executor import AsyncioExecutor
+from rclpy.experimental.asyncio_executor import AsyncioExecutor, AsyncioClock
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from rclpy.task import Future
@@ -72,7 +73,7 @@ def executor(asyncio_loop) -> Generator[AsyncioExecutor, None, None]:
 
 @pytest.fixture
 def test_node() -> Generator[Node, None, None]:
-    node = Node('test_node')
+    node = Node('test_node', clock=AsyncioClock())
     yield node
     node.destroy_node()
 
@@ -258,3 +259,63 @@ def test_timer_fires_when_ros_time_is_active(attached_test_node, executor):
     attached_test_node.get_clock().set_ros_time_override(Time(nanoseconds=int(0.3 * S_TO_NS)))
     executor.spin_until_future_complete(future, timeout_sec=0.1)
     assert future.done()
+
+
+def test_sleep_for_async_system_time(asyncio_loop):
+    clock = AsyncioClock()
+
+    async def coro():
+        start = time.time()
+        done = await clock.sleep_for_async(Duration(seconds=0.2))
+        return done, time.time() - start
+
+    done, elapsed = asyncio_loop.run_until_complete(coro())
+    assert done is True
+    assert math.isclose(elapsed, 0.2, abs_tol=0.05)
+
+
+def test_sleep_until_async_system_time(asyncio_loop):
+    clock = AsyncioClock()
+
+    async def coro():
+        target = clock.now() + Duration(seconds=0.25)
+        start = time.time()
+        done = await clock.sleep_until_async(target)
+        return done, time.time() - start
+
+    done, elapsed = asyncio_loop.run_until_complete(coro())
+    assert done is True
+    assert math.isclose(elapsed, 0.25, abs_tol=0.05)
+
+
+def test_sleep_until_async_respects_ros_time(test_node, asyncio_loop):
+    test_node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+    clock = test_node.get_clock()    
+    clock.set_ros_time_override(Time(nanoseconds=0))
+
+    async def coro():
+        target = Time(nanoseconds=int(0.5 * S_TO_NS), clock_type=clock.clock_type)
+        fut = asyncio.create_task(clock.sleep_until_async(target))
+        await asyncio.sleep(0.05)            # give waiter a chance to arm
+        assert not fut.done()
+        clock.set_ros_time_override(Time(nanoseconds=int(0.6 * S_TO_NS), clock_type=clock.clock_type))
+        return await fut
+
+    done = asyncio_loop.run_until_complete(coro())
+    assert done is True
+
+
+def test_sleep_for_async_wakes_on_context_shutdown(asyncio_loop):
+    ctx = Context()
+    ctx.init()
+    clock = AsyncioClock()
+
+    async def coro():
+        fut = asyncio.create_task(clock.sleep_for_async(Duration(seconds=5), context=ctx))
+        await asyncio.sleep(0.05)
+        ctx.shutdown()
+        return await fut
+
+    done = asyncio_loop.run_until_complete(coro())
+    assert done is False
+    ctx.try_shutdown()
