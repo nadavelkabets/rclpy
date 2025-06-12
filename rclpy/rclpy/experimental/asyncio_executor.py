@@ -37,6 +37,7 @@ from rclpy.subscription import Subscription
 from rclpy.timer import Timer
 from rclpy.utilities import get_default_context
 from rclpy.time import Time
+from rclpy.task import Future
 
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
@@ -384,6 +385,36 @@ class AsyncioExecutor(BaseExecutor[asyncio.Future, asyncio.Task]):
     def create_future(self) -> asyncio.Future:
         asyncio_future = self._loop.create_future()
 
+        return asyncio_future
+    
+    def wrap_future(self, rclpy_future: Future) -> asyncio.Future:
+        """
+        Chain two futures so that when one completes, so does the other.
+
+        The result (or exception) of source will be copied to destination.
+        If destination is cancelled, source gets cancelled too.
+        """
+
+        asyncio_future = self.create_future()
+        def _call_check_cancel(_: asyncio.Future):
+            if asyncio_future.cancelled():
+                rclpy_future.cancel()
+
+        def _call_set_state(_: Future):
+            if asyncio_future.cancelled():
+                return
+            if rclpy_future.cancelled():
+                asyncio_future.cancel()
+            else:
+                exception = rclpy_future.exception()
+                if exception is not None:
+                    asyncio_future.set_exception(exception)
+                else:
+                    result = rclpy_future.result()
+                    asyncio_future.set_result(result)
+
+        asyncio_future.add_done_callback(_call_check_cancel)
+        rclpy_future.add_done_callback(_call_set_state)
         return asyncio_future
 
     def _update_entities_from_nodes(self) -> None:

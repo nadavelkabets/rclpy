@@ -120,7 +120,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             raise exception
         return future.result()
 
-    def call_async(self, request: SrvRequestT, *, future=None) -> Future[SrvResponseT]:
+    def call_async(self, request: SrvRequestT) -> Future[SrvResponseT]:
         """
         Make a service request and asynchronously get the result.
 
@@ -139,7 +139,7 @@ class Client(Generic[SrvRequestT, SrvResponseT]):
             if sequence_number in self._pending_requests:
                 raise RuntimeError(f'Sequence ({sequence_number}) conflicts with pending request')
 
-            future = future or Future[SrvResponseT]()
+            future = Future[SrvResponseT]()
             self._pending_requests[sequence_number] = future
 
             future.add_done_callback(self.remove_pending_request)
