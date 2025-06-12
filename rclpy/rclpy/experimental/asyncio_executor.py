@@ -132,7 +132,6 @@ class _TimerHandler:
         self._schedule_cb = schedule_cb
         self._loop = loop
         self._build_waiter()
-        self._timer.set_on_reset_callback(self.on_reset)
 
     def _build_waiter(self) -> None:
         self._waiter = _WaitHandler(
@@ -353,7 +352,7 @@ class AsyncioExecutor(BaseExecutor):
                 try:
                     await ready_task_getter
                 except asyncio.CancelledError:
-                    return
+                    pass
                 return
 
             if self._shutdown_fut in done:

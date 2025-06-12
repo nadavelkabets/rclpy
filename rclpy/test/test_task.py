@@ -205,6 +205,23 @@ class TestTask(unittest.TestCase):
         t = Task(lambda: None)
         self.assertFalse(t.executing())
 
+    def test_task_throws_cancelled_error_inside_coroutine_when_cancelled(self) -> None:
+        did_throw = False
+
+        async def test_coro():
+            try:
+                await Future()
+            except asyncio.CancelledError:
+                nonlocal did_throw
+                did_throw = True
+                raise
+
+        t = Task(test_coro)
+        t()
+        t.cancel()
+        self.assertTrue(t.cancelled())
+        self.assertTrue(did_throw)
+
 
 class TestFuture(unittest.TestCase):
 
