@@ -225,7 +225,7 @@ class AbstractExecutor:
     def add_node(self, node: 'Node') -> bool:
         raise NotImplementedError()
 
-    def remove_node(node: 'Node') -> None:
+    def remove_node(self, node: 'Node') -> None:
         raise NotImplementedError()
 
     def get_nodes(self) -> List['Node']:

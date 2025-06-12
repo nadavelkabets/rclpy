@@ -15,7 +15,7 @@
 import asyncio
 import inspect
 from functools import partial
-from sys import exc_info
+from sys import exc_info, stderr
 import time
 import traceback
 from typing import (Any, Callable, Coroutine, Dict, Generator, List, Optional, Set,
@@ -42,7 +42,7 @@ from rclpy.task import Future
 EntityT = TypeVar('EntityT', bound=Union[Subscription, Service, Client, Timer])
 
 
-class WaitHandler:
+class _WaitHandler:
     def __init__(
         self,
         clock: ROSClock,
@@ -103,6 +103,10 @@ class WaitHandler:
             ClockChange.ROS_TIME_DEACTIVATED,
         ):
             self.cancel()
+            print(
+                f"Cancelling callback due to clock change: {jump.clock_change}",
+                file=stderr
+            )
             return
         self._process()
 
@@ -110,7 +114,7 @@ class WaitHandler:
         return isinstance(self._clock, ROSClock) and self._clock.ros_time_is_active
 
 
-class TimerHandler:
+class _TimerHandler:
     def __init__(self, timer: Timer, loop: asyncio.AbstractEventLoop, schedule_cb) -> None:
         self._timer = timer
         self._schedule_cb = schedule_cb
@@ -119,7 +123,7 @@ class TimerHandler:
         self._timer.set_on_reset_callback(self.on_reset)
 
     def _build_waiter(self) -> None:
-        self._waiter = WaitHandler(
+        self._waiter = _WaitHandler(
             clock=self._timer.clock,
             loop=self._loop,
             is_finished=self._finished,
@@ -154,12 +158,11 @@ class TimerHandler:
 
 
 class _SleepWaiter:
-    def __init__(self, clock: ROSClock, until: Time, loop: asyncio.AbstractEventLoop, fut: asyncio.Future, ctx: Context) -> None:
+    def __init__(self, clock: ROSClock, until: Time, loop: asyncio.AbstractEventLoop, fut: asyncio.Future) -> None:
         self._clock = clock
         self._until = until
         self._fut = fut
-        self._ctx = ctx
-        self._waiter = WaitHandler(
+        self._waiter = _WaitHandler(
             clock=clock,
             loop=loop,
             is_finished=self._finished,
@@ -167,7 +170,6 @@ class _SleepWaiter:
             time_until_ready_sec=self._time_until_ready,
             on_ready=self._on_ready,
         )
-        ctx.on_shutdown(self._on_shutdown)
 
     def _on_shutdown(self) -> None:
         if not self._fut.done():
@@ -196,15 +198,11 @@ class AsyncioClock(ROSClock):
         return await self.sleep_until_async(self.now() + rel_time, context=context)
 
     async def sleep_until_async(self, until: Time, *, context: Optional[Context] = None) -> bool:
-        if context is None:
-            context = get_default_context()
-        if not context.ok():
-            raise NotInitializedException()
         if until.clock_type != self.clock_type:
             raise ValueError
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
-        waiter = _SleepWaiter(self, until, loop, fut, context)
+        waiter = _SleepWaiter(self, until, loop, fut)
         try:
             return await fut
         finally:
@@ -228,7 +226,7 @@ class AsyncioExecutor(BaseExecutor):
         self._clients: Set[Client] = set()
         self._services: Set[Service] = set()
         self._timers: Set[Timer] = set()
-        self._timer_handlers: Dict[Timer, TimerHandler] = {}
+        self._timer_handlers: Dict[Timer, _TimerHandler] = {}
         self._shutdown_fut = self._loop.create_future()
 
     def get_nodes(self) -> List['Node']:
@@ -449,7 +447,7 @@ class AsyncioExecutor(BaseExecutor):
         )
 
     def _handle_added_timer(self, timer: Timer):
-        handler = TimerHandler(timer, self._loop, self._schedule_ready_callback)
+        handler = _TimerHandler(timer, self._loop, self._schedule_ready_callback)
         self._timer_handlers[timer] = handler
         timer.set_on_reset_callback(handler.on_reset)
 

@@ -397,7 +397,7 @@ class TestExecutor(unittest.TestCase):
 
     def test_create_task_during_spin(self) -> None:
         self.assertIsNotNone(self.node.handle)
-        # The AsyncioExecutor is not thread safe
+        # AsyncioExecutor is not thread safe
         for cls in [SingleThreadedExecutor, EventsExecutor]:
             with self.subTest(cls=cls):
                 executor = cls(context=self.context)
