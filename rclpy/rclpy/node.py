@@ -146,7 +146,8 @@ class Node:
         parameter_overrides: Optional[List[Parameter[Any]]] = None,
         allow_undeclared_parameters: bool = False,
         automatically_declare_parameters_from_overrides: bool = False,
-        enable_logger_service: bool = False
+        enable_logger_service: bool = False,
+        clock: Optional[ROSClock] = None
     ) -> None:
         """
         Create a Node.
@@ -244,7 +245,10 @@ class Node:
             self._parameter_overrides.update({p.name: p for p in parameter_overrides})
 
         # Clock that has support for ROS time.
-        self._clock = ROSClock()
+        if clock is not None:
+            self._clock = clock
+        else:
+            self._clock = ROSClock()
 
         if automatically_declare_parameters_from_overrides:
             self.declare_parameters(

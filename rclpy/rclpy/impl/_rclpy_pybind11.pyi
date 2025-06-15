@@ -180,6 +180,9 @@ class Client(Destroyable, Generic[SrvRequestT, SrvResponseT]):
     ) -> tuple[rmw_service_info_t, SrvResponseT] | tuple[None, None]:
         """Take a received response from an earlier request."""
 
+    def get_logger_name(self) -> str:
+        """Get the name of the logger associated with the node of the client."""
+
     def configure_introspection(
         self,
         clock: Clock,
@@ -187,6 +190,12 @@ class Client(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         introspection_state: service_introspection.ServiceIntrospectionState
     ) -> None:
         """Configure whether introspection is enabled."""
+
+    def set_on_new_response_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_response_callback(self) -> None:
+        ...
 
 
 class Context(Destroyable):
@@ -260,6 +269,9 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
     def qos(self) -> _rmw_qos_profile_dict:
         """Get the qos profile of the service."""
 
+    def get_logger_name(self) -> str:
+        """Get the name of the logger associated with the node of the service."""
+
     def service_send_response(self, pyresponse: SrvResponseT, header: rmw_request_id_t) -> None:
         """Send a response."""
 
@@ -275,6 +287,12 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         introspection_state: service_introspection.ServiceIntrospectionState
     ) -> None:
         """Configure whether introspection is enabled."""
+
+    def set_on_new_request_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_request_callback(self) -> None:
+        ...
 
 
 class TypeDescriptionService(Destroyable):
@@ -568,6 +586,12 @@ class Timer(Destroyable):
     def is_timer_canceled(self) -> bool:
         """Check if a timer is canceled."""
 
+    def set_on_reset_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_reset_callback(self) -> None:
+        ...
+
 
 class Subscription(Destroyable, Generic[MsgT]):
 
@@ -589,6 +613,12 @@ class Subscription(Destroyable, Generic[MsgT]):
 
     def get_publisher_count(self) -> int:
         """Count the publishers from a subscription."""
+
+    def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
+        ...
+
+    def clear_on_new_message_callback(self) -> None:
+        ...
 
 
 class rcl_time_point_t:

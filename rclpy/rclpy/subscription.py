@@ -15,12 +15,14 @@
 
 from enum import Enum
 import inspect
+import traceback
 from types import TracebackType
 from typing import Callable, Generic, Optional, Type, TypedDict, TypeVar, Union
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.event_handler import SubscriptionEventCallbacks
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
+from rclpy.logging import get_logger
 from rclpy.qos import QoSProfile
 from rclpy.type_support import MsgT
 
@@ -93,6 +95,10 @@ class Subscription(Generic[MsgT]):
     def handle(self) -> '_rclpy.Subscription[MsgT]':
         return self.__subscription
 
+    def get_logger_name(self) -> str:
+        with self.handle:
+            return self.__subscription.get_logger_name()
+
     def destroy(self) -> None:
         """
         Destroy a container for a ROS subscription.
@@ -143,3 +149,20 @@ class Subscription(Generic[MsgT]):
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def set_on_new_message_callback(self, callback: Callable[[int], None]) -> None:
+        logger = get_logger(self.get_logger_name())
+
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                logger.error(
+                    f'Caught exception in on message callback for subscription: {self.topic_name}'
+                )
+                logger.error(traceback.format_exc())
+
+        self.__subscription.set_on_new_message_callback(safe_callback)
+
+    def clear_on_new_message_callback(self) -> None:
+        self.__subscription.clear_on_new_message_callback()

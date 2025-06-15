@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading
+import traceback
 
 from types import TracebackType
 from typing import Callable
@@ -64,7 +65,6 @@ class TimerInfo:
 
 
 class Timer:
-
     def __init__(
         self,
         callback: Union[Callable[[], None], Callable[[TimerInfo], None], None],
@@ -173,6 +173,18 @@ class Timer:
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.destroy()
+
+    def set_on_reset_callback(self, callback: Callable[[int], None]) -> None:
+        def safe_callback(number_of_events: int):
+            try:
+                callback(number_of_events)
+            except Exception:
+                traceback.print_exc()
+
+        self.__timer.set_on_reset_callback(safe_callback)
+
+    def clear_on_reset_callback(self) -> None:
+        self.__timer.clear_on_reset_callback()
 
 
 class Rate:

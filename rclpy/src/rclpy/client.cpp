@@ -23,6 +23,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "client.hpp"
 #include "clock.hpp"
@@ -30,9 +31,11 @@
 #include "node.hpp"
 #include "python_allocator.hpp"
 #include "utils.hpp"
+#include "events_executor/rcl_support.hpp"
 
 namespace rclpy
 {
+using events_executor::RclEventCallbackTrampoline;
 
 void
 Client::destroy()
@@ -165,9 +168,55 @@ Client::configure_introspection(
 }
 
 const char *
+Client::get_logger_name() const
+{
+  const char * node_logger_name = rcl_node_get_logger_name(node_.rcl_ptr());
+  if (!node_logger_name) {
+    throw RCLError("Node logger name not set");
+  }
+
+  return node_logger_name;
+}
+
+
+const char *
 Client::get_service_name()
 {
   return rcl_client_get_service_name(rcl_client_.get());
+}
+
+void
+Client::set_callback(
+  rcl_event_callback_t callback,
+  const void * user_data)
+{
+  rcl_ret_t ret = rcl_client_set_on_new_response_callback(
+    rcl_client_.get(),
+    callback,
+    user_data);
+
+  if (RCL_RET_OK != ret) {
+    throw RCLError("failed to set the on new message callback for subscription");
+  }
+}
+
+void
+Client::set_on_new_response_callback(std::function<void(size_t)> callback)
+{
+  clear_on_new_response_callback();
+  on_new_response_callback_ = std::move(callback);
+  set_callback(
+    RclEventCallbackTrampoline,
+    static_cast<const void *>(&on_new_response_callback_));
+}
+
+void
+Client::clear_on_new_response_callback()
+{
+  if (on_new_response_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_response_callback_ = nullptr;
+  }
 }
 
 void
@@ -190,10 +239,15 @@ define_client(py::object module)
     "service_server_is_available", &Client::service_server_is_available,
     "Return true if the service server is available")
   .def(
+    "get_logger_name", &Client::get_logger_name,
+    "Get the name of the logger associated with the node of the client.")
+  .def(
     "take_response", &Client::take_response,
     "Take a received response from an earlier request")
   .def(
     "configure_introspection", &Client::configure_introspection,
-    "Configure whether introspection is enabled");
+    "Configure whether introspection is enabled")
+  .def("set_on_new_response_callback", &Client::set_on_new_response_callback)
+  .def("clear_on_new_response_callback", &Client::clear_on_new_response_callback);
 }
 }  // namespace rclpy

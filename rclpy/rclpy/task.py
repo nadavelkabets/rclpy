@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from asyncio import CancelledError
 from enum import Enum
 import inspect
 import sys
@@ -56,8 +57,10 @@ class Future(Generic[T]):
         # Lock for threadsafety
         self._lock = threading.Lock()
         # An executor to use when scheduling done callbacks
-        self._executor: Optional[Union[weakref.ReferenceType['Executor'],
-                                       Callable[[], None]]] = None
+        self._executor: Union[
+            weakref.ReferenceType['Executor'],
+            Callable[[], None]
+        ]
         self._set_executor(executor)
 
     def __del__(self) -> None:
@@ -69,7 +72,7 @@ class Future(Generic[T]):
     def __await__(self) -> Generator[None, None, Optional[T]]:
         # Yield if the task is not finished
         while self._pending():
-            yield
+            yield self
         return self.result()
 
     def _pending(self) -> bool:
@@ -154,7 +157,6 @@ class Future(Generic[T]):
         This function assumes self._lock is not held.
         """
         with self._lock:
-            assert self._executor is not None
             executor = self._executor()
             callbacks = self._callbacks
             self._callbacks = []
@@ -194,7 +196,6 @@ class Future(Generic[T]):
         invoke = False
         with self._lock:
             if not self._pending():
-                assert self._executor is not None
                 executor = self._executor()
                 if executor is not None:
                     executor.create_task(callback, self)
@@ -276,8 +277,9 @@ class Task(Future[T]):
         self._executing = False
         # Lock acquired to prevent task from executing in parallel with itself
         self._task_lock = threading.Lock()
+        self._fut_waiter: Optional[Future] = None
 
-    def __call__(self) -> None:
+    def __call__(self, *, should_cancel: bool = False) -> None:
         """
         Run or resume a task.
 
@@ -301,11 +303,23 @@ class Task(Future[T]):
                 # Execute a coroutine
                 handler = self._handler
                 try:
-                    handler.send(None)
+                    if should_cancel:
+                        future = handler.throw(CancelledError())
+                    else:
+                        future = handler.send(None)
+                    executor = self._executor()
+                    if executor and hasattr(executor, '_resume_task'):
+                        if future:
+                            future.add_done_callback(self.__wake)
+                            self._fut_waiter = future
+                        else:
+                            executor._resume_task(self)
                 except StopIteration as e:
                     # The coroutine finished; store the result
                     self.set_result(e.value)
                     self._complete_task()
+                except CancelledError:
+                    super().cancel()
                 except Exception as e:
                     self.set_exception(e)
                     self._complete_task()
@@ -313,7 +327,10 @@ class Task(Future[T]):
                 # Execute a normal function
                 try:
                     assert self._handler is not None and callable(self._handler)
-                    self.set_result(self._handler(*self._args, **self._kwargs))
+                    if should_cancel:
+                        super().cancel()
+                    else:
+                        self.set_result(self._handler(*self._args, **self._kwargs))
                 except Exception as e:
                     self.set_exception(e)
                 self._complete_task()
@@ -321,6 +338,15 @@ class Task(Future[T]):
             self._executing = False
         finally:
             self._task_lock.release()
+
+    def __wake(self, fut: Future):
+        self._fut_waiter = None
+        if fut.cancelled():
+            self(should_cancel=True)
+        elif fut.exception() is not None:
+            self.set_exception(fut.exception())
+        else:
+            self()
 
     def _complete_task(self) -> None:
         """Cleanup after task finished."""
@@ -337,7 +363,8 @@ class Task(Future[T]):
         return self._executing
 
     def cancel(self) -> None:
-        if self._pending() and inspect.iscoroutine(self._handler):
-            self._handler.close()
+        if self._fut_waiter:
+            self._fut_waiter.cancel()
+            return
 
-        super().cancel()
+        self(should_cancel=True)
