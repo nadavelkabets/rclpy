@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from dataclasses import dataclass
 from functools import partial
 import inspect
 import os
@@ -22,6 +24,7 @@ from threading import Lock
 from threading import RLock
 import time
 from types import TracebackType
+from typing import Deque
 from typing import Any
 from typing import Callable
 from typing import ContextManager
@@ -176,6 +179,12 @@ class TimeoutObject:
         self._timeout = timeout
 
 
+@dataclass
+class TaskData:
+    source_node: 'Optional[Node]' = None
+    source_entity: 'Optional[Entity]' = None
+
+
 class Executor(ContextManager['Executor']):
     """
     The base class for an executor.
@@ -205,8 +214,10 @@ class Executor(ContextManager['Executor']):
         self._context = get_default_context() if context is None else context
         self._nodes: Set[Node] = set()
         self._nodes_lock = RLock()
-        # Tasks to be executed (oldest first) 3-tuple Task, Entity, Node
-        self._tasks: List[Tuple[Task[Any], 'Optional[Entity]', Optional[Node]]] = []
+        # all tasks that are not complete or canceled
+        self._pending_tasks: Dict[Task, TaskData] = {}
+        # tasks that are ready to execute
+        self._ready_tasks: Deque[Task[Any]] = deque()
         self._tasks_lock = Lock()
         # This is triggered when wait_for_ready_callbacks should rebuild the wait list
         self._guard: Optional[GuardCondition] = GuardCondition(
@@ -253,8 +264,15 @@ class Executor(ContextManager['Executor']):
         :param callback: A callback to be run in the executor.
         """
         task = Task(callback, args, kwargs, executor=self)
+        with self._tasks_lock:
+            self._pending_tasks[task] = TaskData()
+        task.add_done_callback(self._remove_done_task)
         self._call_task_in_next_spin(task)
         return task
+
+    def _remove_done_task(self, task: Task):
+        with self._tasks_lock:
+            del self._pending_tasks[task]
 
     def _call_task_in_next_spin(self, task: Task) -> None:
         """
@@ -263,7 +281,7 @@ class Executor(ContextManager['Executor']):
         :param task: A task to be run in the executor.
         """
         with self._tasks_lock:
-            self._tasks.append((task, None, None))
+            self._ready_tasks.append(task)
             if self._guard:
                 self._guard.trigger()
 
@@ -336,12 +354,21 @@ class Executor(ContextManager['Executor']):
         with self._nodes_lock:
             try:
                 self._nodes.remove(node)
+                self._remove_pending_tasks_for_node(node)
             except KeyError:
                 pass
             else:
                 # Rebuild the wait set so it doesn't include this node
                 if self._guard:
                     self._guard.trigger()
+
+    def _remove_pending_tasks_for_node(self, node: 'Node') -> None:
+        with self._tasks_lock:
+            pending_tasks = list(self._pending_tasks.items())
+
+        for task, task_data in pending_tasks:
+            if task_data.source_node is node:
+                task.cancel()
 
     def wake(self) -> None:
         """
@@ -631,6 +658,12 @@ class Executor(ContextManager['Executor']):
         task: Task[None] = Task(
             handler, (entity, self._guard, self._is_shutdown, self._work_tracker),
             executor=self)
+        with self._tasks_lock:
+            self._pending_tasks[task] = TaskData(
+                source_entity=entity,
+                source_node=node
+            )
+        task.add_done_callback(self._remove_done_task)
         return task
 
     def can_execute(self, entity: 'Entity') -> bool:
@@ -675,21 +708,20 @@ class Executor(ContextManager['Executor']):
                 nodes_to_use = self.get_nodes()
 
             # Yield tasks in-progress before waiting for new work
-            tasks = None
             with self._tasks_lock:
-                tasks = list(self._tasks)
-                # Tasks that need to be executed again will add themselves back to the executor
-                self._tasks = []
-            for task_trio in tasks:
-                task, entity, node = task_trio
+                ready_tasks_count = len(self._ready_tasks)
+            for _ in range(ready_tasks_count):
+                task = self._ready_tasks.popleft()
+                task_data = self._pending_tasks[task]
+                node = task_data.source_node
                 if node is None or node in nodes_to_use:
+                    entity = task_data.source_entity
                     yielded_work = True
-                    yield task_trio
+                    yield task, entity, node
                 else:
                     # Asked not to execute these tasks, so don't do them yet
                     with self._tasks_lock:
-                        self._tasks.append(task_trio)
-
+                        self._ready_tasks.append(task)
             # Gather entities that can be waited on
             subscriptions: List[Subscription[Any, ]] = []
             guards: List[GuardCondition] = []
