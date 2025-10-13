@@ -266,13 +266,8 @@ class Executor(ContextManager['Executor']):
         task = Task(callback, args, kwargs, executor=self)
         with self._tasks_lock:
             self._pending_tasks[task] = TaskData()
-        task.add_done_callback(self._remove_done_task)
         self._call_task_in_next_spin(task)
         return task
-
-    def _remove_done_task(self, task: Task):
-        with self._tasks_lock:
-            del self._pending_tasks[task]
 
     def _call_task_in_next_spin(self, task: Task) -> None:
         """
@@ -354,21 +349,12 @@ class Executor(ContextManager['Executor']):
         with self._nodes_lock:
             try:
                 self._nodes.remove(node)
-                self._remove_pending_tasks_for_node(node)
             except KeyError:
                 pass
             else:
                 # Rebuild the wait set so it doesn't include this node
                 if self._guard:
                     self._guard.trigger()
-
-    def _remove_pending_tasks_for_node(self, node: 'Node') -> None:
-        with self._tasks_lock:
-            pending_tasks = list(self._pending_tasks.items())
-
-        for task, task_data in pending_tasks:
-            if task_data.source_node is node:
-                task.cancel()
 
     def wake(self) -> None:
         """
@@ -663,7 +649,6 @@ class Executor(ContextManager['Executor']):
                 source_entity=entity,
                 source_node=node
             )
-        task.add_done_callback(self._remove_done_task)
         return task
 
     def can_execute(self, entity: 'Entity') -> bool:
@@ -709,6 +694,11 @@ class Executor(ContextManager['Executor']):
 
             # Yield tasks in-progress before waiting for new work
             with self._tasks_lock:
+                 # Get rid of any tasks that are done or cancelled
+                for task in list(self._pending_tasks.keys()):
+                    if task.done() or task.cancelled():
+                        del self._pending_tasks[task]
+
                 ready_tasks_count = len(self._ready_tasks)
             for _ in range(ready_tasks_count):
                 task = self._ready_tasks.popleft()
