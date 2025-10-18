@@ -160,7 +160,15 @@ class AsyncioExecutor(BaseExecutor):
             )
     
     def _handle_added_subscription(self, sub: Subscription, node: Node):
-        sub.handle.set_on_new_message_callback(partial(self._handle_ready_subscription, sub, node))
+        sub.handle.set_on_new_message_callback(
+            partial(
+                self._loop.call_soon_threadsafe,
+                self._handle_ready_entity,
+                self._take_subscription,
+                sub,
+                node,
+            )
+        )
 
     def _handle_removed_subscription(self, sub: Subscription):
         sub.handle.clear_on_new_message_callback()
@@ -186,20 +194,6 @@ class AsyncioExecutor(BaseExecutor):
             current_set.remove(entity)
 
         return added_entities or removed_entities
-
-    def _handle_ready_subscription(
-            self,
-            subscription: Subscription,
-            node: Node,
-            number_of_events: int
-    ) -> None:
-        self._loop.call_soon_threadsafe(
-            self._handle_ready_entity,
-            self._take_subscription,
-            subscription,
-            node,
-            number_of_events
-        )
     
     def _handle_ready_entity(
         self,
