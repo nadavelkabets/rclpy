@@ -149,17 +149,25 @@ class AsyncioExecutor(BaseExecutor):
     def _update_entities_from_nodes(self) -> None:
         for node, node_entities in self._node_to_entities.items():
             subscriptions = set()
-            subscriptions.update(node_entities.subscriptions)
+            subscriptions.update(node.subscriptions)
 
             self._update_entity_set(
+                node,
                 node_entities.subscriptions,
                 subscriptions,
-                lambda sub: sub.handle.set_on_new_message_callback(partial(self._handle_ready_subscription, sub, node)),
-                lambda sub: sub.handle.clear_on_new_message_callback(),
+                self._handle_added_subscription,
+                self._handle_removed_subscription
             )
+    
+    def _handle_added_subscription(self, sub: Subscription, node: Node):
+        sub.handle.set_on_new_message_callback(partial(self._handle_ready_subscription, sub, node))
+
+    def _handle_removed_subscription(self, sub: Subscription):
+        sub.handle.clear_on_new_message_callback()
 
     def _update_entity_set(
         self,
+        node: Node,
         current_set: set[EntityT],
         new_set: set[EntityT],
         new_entity_cb: Callable[[EntityT], None],
@@ -169,7 +177,7 @@ class AsyncioExecutor(BaseExecutor):
         for entity in added_entities:
             current_set.add(entity)
             entity.handle.__enter__()
-            new_entity_cb(entity)
+            new_entity_cb(entity, node)
 
         removed_entities = current_set - new_set
         for entity in removed_entities:
