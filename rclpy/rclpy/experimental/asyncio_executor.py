@@ -47,8 +47,8 @@ class AsyncioExecutor(BaseExecutor):
         self._context = context or get_default_context()
         self._context.on_shutdown(self._sync_shutdown)
         self._nodes: Set['Node'] = set()
-        self._subscription_to_node: Dict[Subscription, Node] = {}
-        self._node_to_tasks: Dict[Node, Set[asyncio.Task]] = {}
+        self._subscription_to_node: Dict[Subscription, 'Node'] = {}
+        self._node_to_tasks: Dict['Node', Set[asyncio.Task]] = {}
         self._shutdown_task: Optional[asyncio.Task] = None
 
     def get_nodes(self) -> List['Node']:
@@ -62,6 +62,7 @@ class AsyncioExecutor(BaseExecutor):
 
     @property
     def loop(self) -> asyncio.AbstractEventLoop:
+        """Get the event loop associated with the executor."""
         return self._loop
 
     async def __aenter__(self) -> 'AsyncioExecutor':
@@ -75,8 +76,12 @@ class AsyncioExecutor(BaseExecutor):
     ) -> None:
         await self.shutdown()
 
+    def spin(self) -> None:
+        """Block and process callbacks until shutdown."""
+        self._loop.run_forever()
+
+
     def _clear_entities(self) -> List[asyncio.Task]:
-        """Clear all entities and return list of tasks to cancel."""
         self._nodes.clear()
         self._update_entities_from_nodes()
 
