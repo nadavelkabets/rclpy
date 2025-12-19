@@ -15,6 +15,7 @@
 import asyncio
 from functools import partial
 import traceback
+import warnings
 from typing import Callable
 from typing import Coroutine
 from typing import Dict
@@ -41,12 +42,14 @@ class AsyncioExecutor(BaseExecutor):
         *,
         context: Optional[Context] = None
     ) -> None:
+        self._owns_loop = False
         self._loop = loop or self._get_loop()
         self._context = context or get_default_context()
-        # self._context.on_shutdown(self.shutdown)
+        self._context.on_shutdown(self._sync_shutdown)
         self._nodes: Set['Node'] = set()
         self._subscription_to_node: Dict[Subscription, Node] = {}
         self._node_to_tasks: Dict[Node, Set[asyncio.Task]] = {}
+        self._shutdown_task: Optional[asyncio.Task] = None
 
     def get_nodes(self) -> List['Node']:
         """Return nodes that have been added to this executor."""
@@ -61,43 +64,71 @@ class AsyncioExecutor(BaseExecutor):
     def loop(self) -> asyncio.AbstractEventLoop:
         return self._loop
 
-    async def __enter__(self) -> 'AsyncioExecutor':
+    async def __aenter__(self) -> 'AsyncioExecutor':
         return self
 
-    # async def __exit__(
-    #     self,
-    #     exc_type: Optional[Type[BaseException]],
-    #     exc_val: Optional[BaseException],
-    #     exc_tb: Optional[TracebackType],
-    # ) -> None:
-    #     await self.shutdown()
+    async def __aexit__(
+        self,
+        _exc_type: Optional[type[BaseException]],
+        _exc_val: Optional[BaseException],
+        _exc_tb: Optional[object],
+    ) -> None:
+        await self.shutdown()
 
-    # async def shutdown(self, timeout_sec: Optional[float] = None) -> bool:
-    #     """Clear all nodes and close the event loop."""
-    #     if not self._shutdown_fut.done():
-    #         self._shutdown_fut.set_result(None)
+    def _clear_entities(self) -> List[asyncio.Task]:
+        """Clear all entities and return list of tasks to cancel."""
+        self._nodes.clear()
+        self._update_entities_from_nodes()
 
-    #     self._nodes.clear()
-    #     self._update_entities_from_nodes()
+        all_tasks = []
+        for tasks in self._node_to_tasks.values():
+            for task in tasks:
+                task.cancel()
+                all_tasks.append(task)
+        self._node_to_tasks.clear()
+        return all_tasks
 
-    #     while not self._ready_tasks.empty():
-    #         self._ready_tasks.get_nowait()
+    async def shutdown(self) -> None:
+        """Clear all nodes and cancel pending tasks."""
+        all_tasks = self._clear_entities()
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
 
-    #     for _ in range(len(self._tasks)):
-    #         task = self._tasks.pop()
-    #         task.cancel()
+    def __del__(self) -> None:
+        if self._owns_loop and not self._loop.is_closed():
+            self._loop.close()
 
-    #     return True
+    async def _gather_and_stop(self, tasks: List[asyncio.Task]) -> None:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if self._owns_loop:
+            self._loop.stop()
 
-    # def __del__(self):
-    #     self.shutdown()
-    #     if not self._loop.is_closed():
-    #         self._loop.close()
+    def _sync_shutdown(self) -> None:
+        """Synchronous shutdown called by context on_shutdown."""
+        all_tasks = self._clear_entities()
+
+        if not all_tasks:
+            return
+
+        if self._loop.is_closed():
+            warnings.warn(
+                f'Event loop is closed but {len(all_tasks)} tasks are still pending. '
+                'Call "await executor.shutdown()" before closing the event loop.',
+                RuntimeWarning,
+                stacklevel=2
+            )
+            return
+
+        if self._loop.is_running():
+            self._shutdown_task = self._loop.create_task(self._gather_and_stop(all_tasks))
+        else:
+            self._loop.run_until_complete(asyncio.gather(*all_tasks, return_exceptions=True))
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         try:
             return asyncio.get_running_loop()
         except RuntimeError:
+            self._owns_loop = True
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             return loop
