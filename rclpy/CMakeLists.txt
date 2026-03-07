@@ -226,6 +226,7 @@ if(BUILD_TESTING)
       test/test_validate_topic_name.py
       test/test_waitable.py
       test/test_wait_for_message.py
+      test/test_async_node.py
     )
 
     foreach(_test_path ${_rclpy_pytest_tests})
