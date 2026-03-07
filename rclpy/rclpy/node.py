@@ -127,7 +127,107 @@ NodeNameNonExistentError: TypeAlias = _rclpy.NodeNameNonExistentError
 ParameterInput: TypeAlias = Union[AllowableParameterValue, Parameter.Type, ParameterValue]
 
 
-class Node:
+class BaseNode:
+    def __init__(
+        self,
+        node_name: str,
+        *,
+        context: Optional[Context] = None,
+        cli_args: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+        use_global_arguments: bool = True,
+        enable_rosout: bool = True,
+        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
+        start_parameter_services: bool = True,
+        parameter_overrides: Optional[List[Parameter[Any]]] = None,
+        allow_undeclared_parameters: bool = False,
+        automatically_declare_parameters_from_overrides: bool = False,
+        enable_logger_service: bool = False
+    ) -> None:
+        self._context = get_default_context() if context is None else context
+        self._start_parameter_services = start_parameter_services
+        self._automatically_declare_parameters_from_overrides = automatically_declare_parameters_from_overrides
+        self._enable_logger_service = enable_logger_service
+
+        self._parameters: Dict[str, Parameter[Any]] = {}
+        self._pre_set_parameters_callbacks: List[Callable[[List[Parameter[Any]]],
+                                                          List[Parameter[Any]]]] = []
+        self._on_set_parameters_callbacks: \
+            List[Callable[[List[Parameter[Any]]], SetParametersResult]] = []
+        self._post_set_parameters_callbacks: List[Callable[[List[Parameter[Any]]], None]] = []
+        self._allow_undeclared_parameters = allow_undeclared_parameters
+        self._parameter_overrides: Dict[str, Parameter[Any]] = {}
+        self._descriptors: Dict[str, ParameterDescriptor] = {}
+        self._clock = ROSClock()
+
+        namespace = namespace or ''
+
+        if self._context.handle is None or not self._context.ok():
+            raise NotInitializedException('cannot create node')
+
+        rosout_qos_profile = self._validate_qos_or_depth_parameter(rosout_qos_profile)
+
+        with self._context.handle:
+            try:
+                self.__node = _rclpy.Node(
+                    node_name,
+                    namespace,
+                    self._context.handle,
+                    cli_args,
+                    use_global_arguments,
+                    enable_rosout,
+                    rosout_qos_profile.get_c_qos_profile()
+                )
+            except ValueError:
+                # these will raise more specific errors if the name or namespace is bad
+                validate_node_name(node_name)
+                # emulate what rcl_node_init() does to accept '' and relative namespaces
+                if not namespace:
+                    namespace = '/'
+                if not namespace.startswith('/'):
+                    namespace = '/' + namespace
+                validate_namespace(namespace)
+                # Should not get to this point
+                raise RuntimeError('rclpy_create_node failed for unknown reason')
+            
+        with self.__node:
+            self._logger = get_logger(self.__node.logger_name())
+
+        with self.__node:
+            self._parameter_overrides = self.__node.get_parameters(Parameter)
+        # Combine parameters from params files with those from the node constructor
+        if parameter_overrides is not None:
+            self._parameter_overrides.update({p.name: p for p in parameter_overrides})
+
+    def _validate_qos_or_depth_parameter(self, qos_or_depth: Union[QoSProfile, int]) -> QoSProfile:
+        if isinstance(qos_or_depth, QoSProfile):
+            return qos_or_depth
+        elif isinstance(qos_or_depth, int):
+            if qos_or_depth < 0:
+                raise ValueError('history depth must be greater than or equal to zero')
+            return QoSProfile(depth=qos_or_depth)
+        else:
+            raise TypeError(
+                'Expected QoSProfile or int, but received {!r}'.format(type(qos_or_depth)))
+
+    @property
+    def handle(self) -> _rclpy.Node:
+        """
+        Get the handle to the underlying `rcl_node_t`.
+
+        Cannot be modified after node creation.
+
+        :raises: AttributeError if modified after creation.
+        """
+        return self.__node
+
+    @property
+    def context(self) -> Context:
+        """Get the context associated with the node."""
+        return self._context
+
+
+class Node(BaseNode):
     """
     A Node in the ROS graph.
 
@@ -187,8 +287,20 @@ class Node:
             to get and set logger levels of this node. Otherwise, logger levels are only managed
             locally. That is, logger levels cannot be changed remotely.
         """
-        self._context = get_default_context() if context is None else context
-        self._parameters: Dict[str, Parameter[Any]] = {}
+        super().__init__(
+            node_name=node_name,
+            context=context,
+            cli_args=cli_args,
+            namespace=namespace,
+            use_global_arguments=use_global_arguments,
+            enable_rosout=enable_rosout,
+            rosout_qos_profile=rosout_qos_profile,
+            start_parameter_services=start_parameter_services,
+            parameter_overrides=parameter_overrides,
+            allow_undeclared_parameters=allow_undeclared_parameters,
+            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
+            enable_logger_service=enable_logger_service,
+        )
         self._publishers: List[Publisher[Any]] = []
         self._subscriptions: List[Subscription[Any]] = []
         self._clients: List[Client[Any, Any]] = []
@@ -197,63 +309,12 @@ class Node:
         self._guards: List[GuardCondition] = []
         self.__waitables: List[Waitable[Any]] = []
         self._default_callback_group = MutuallyExclusiveCallbackGroup()
-        self._pre_set_parameters_callbacks: List[Callable[[List[Parameter[Any]]],
-                                                          List[Parameter[Any]]]] = []
-        self._on_set_parameters_callbacks: \
-            List[Callable[[List[Parameter[Any]]], SetParametersResult]] = []
-        self._post_set_parameters_callbacks: List[Callable[[List[Parameter[Any]]], None]] = []
         self._rate_group = ReentrantCallbackGroup()
-        self._allow_undeclared_parameters = allow_undeclared_parameters
-        self._parameter_overrides: Dict[str, Parameter[Any]] = {}
-        self._descriptors: Dict[str, ParameterDescriptor] = {}
-
-        namespace = namespace or ''
-
-        if self._context.handle is None or not self._context.ok():
-            raise NotInitializedException('cannot create node')
-
-        rosout_qos_profile = self._validate_qos_or_depth_parameter(rosout_qos_profile)
-
-        with self._context.handle:
-            try:
-                self.__node = _rclpy.Node(
-                    node_name,
-                    namespace,
-                    self._context.handle,
-                    cli_args,
-                    use_global_arguments,
-                    enable_rosout,
-                    rosout_qos_profile.get_c_qos_profile()
-                )
-            except ValueError:
-                # these will raise more specific errors if the name or namespace is bad
-                validate_node_name(node_name)
-                # emulate what rcl_node_init() does to accept '' and relative namespaces
-                if not namespace:
-                    namespace = '/'
-                if not namespace.startswith('/'):
-                    namespace = '/' + namespace
-                validate_namespace(namespace)
-                # Should not get to this point
-                raise RuntimeError('rclpy_create_node failed for unknown reason')
-        with self.handle:
-            self._logger = get_logger(self.__node.logger_name())
-
         self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
 
         self._parameter_event_publisher: Optional[Publisher[ParameterEvent]] = \
             self.create_publisher(ParameterEvent, '/parameter_events',
                                   qos_profile_parameter_events)
-
-        with self.handle:
-            self._parameter_overrides = self.__node.get_parameters(Parameter)
-        # Combine parameters from params files with those from the node constructor and
-        # use the set_parameters_atomically API so a parameter event is published.
-        if parameter_overrides is not None:
-            self._parameter_overrides.update({p.name: p for p in parameter_overrides})
-
-        # Clock that has support for ROS time.
-        self._clock = ROSClock()
 
         if automatically_declare_parameters_from_overrides:
             self.declare_parameters(
@@ -342,11 +403,6 @@ class Node:
             executor.wake()
 
     @property
-    def context(self) -> Context:
-        """Get the context associated with the node."""
-        return self._context
-
-    @property
     def default_callback_group(self) -> CallbackGroup:
         """
         Get the default callback group.
@@ -355,21 +411,6 @@ class Node:
         then it is added to the default callback group.
         """
         return self._default_callback_group
-
-    @property
-    def handle(self) -> _rclpy.Node:
-        """
-        Get the handle to the underlying `rcl_node_t`.
-
-        Cannot be modified after node creation.
-
-        :raises: AttributeError if modified after creation.
-        """
-        return self.__node
-
-    @handle.setter
-    def handle(self, value: None) -> None:
-        raise AttributeError('handle cannot be modified after node creation')
 
     def get_name(self) -> str:
         """Get the name of the node."""
@@ -1504,17 +1545,6 @@ class Node:
         expanded_topic_or_service_name = expand_topic_name(topic_or_service_name, name, namespace)
         validate_full_topic_name(expanded_topic_or_service_name, is_service=is_service)
 
-    def _validate_qos_or_depth_parameter(self, qos_or_depth: Union[QoSProfile, int]) -> QoSProfile:
-        if isinstance(qos_or_depth, QoSProfile):
-            return qos_or_depth
-        elif isinstance(qos_or_depth, int):
-            if qos_or_depth < 0:
-                raise ValueError('history depth must be greater than or equal to zero')
-            return QoSProfile(depth=qos_or_depth)
-        else:
-            raise TypeError(
-                'Expected QoSProfile or int, but received {!r}'.format(type(qos_or_depth)))
-
     def add_waitable(self, waitable: Waitable[Any]) -> None:
         """
         Add a class that is capable of adding things to the wait set.
@@ -2057,7 +2087,7 @@ class Node:
         while self._guards:
             self.destroy_guard_condition(self._guards[0])
         self._type_description_service.destroy()
-        self.__node.destroy_when_not_in_use()
+        self.handle.destroy_when_not_in_use()
         self._wake_executor()
 
     def get_publisher_names_and_types_by_node(
