@@ -156,3 +156,7 @@ class ROSInterruptException(Exception):
 
     def __init__(self) -> None:
         Exception.__init__(self, 'rclpy.shutdown() has been called')
+
+class TimeSourceChangedError(Exception):
+    """Raised when a sleep is interrupted by a time source change."""
+    pass
