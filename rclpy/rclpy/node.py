@@ -226,6 +226,24 @@ class BaseNode:
         """Get the context associated with the node."""
         return self._context
 
+    def get_name(self) -> str:
+        """Get the name of the node."""
+        with self.handle:
+            return self.handle.get_node_name()
+
+    def get_namespace(self) -> str:
+        """Get the namespace of the node."""
+        with self.handle:
+            return self.handle.get_namespace()
+
+    def get_clock(self) -> Clock:
+        """Get the clock used by the node."""
+        return self._clock
+
+    def get_logger(self) -> RcutilsLogger:
+        """Get the nodes logger."""
+        return self._logger
+
 
 class Node(BaseNode):
     """
@@ -411,24 +429,6 @@ class Node(BaseNode):
         then it is added to the default callback group.
         """
         return self._default_callback_group
-
-    def get_name(self) -> str:
-        """Get the name of the node."""
-        with self.handle:
-            return self.handle.get_node_name()
-
-    def get_namespace(self) -> str:
-        """Get the namespace of the node."""
-        with self.handle:
-            return self.handle.get_namespace()
-
-    def get_clock(self) -> Clock:
-        """Get the clock used by the node."""
-        return self._clock
-
-    def get_logger(self) -> RcutilsLogger:
-        """Get the nodes logger."""
-        return self._logger
 
     @overload
     def declare_parameter(self, name: str, value: AllowableParameterValueT,

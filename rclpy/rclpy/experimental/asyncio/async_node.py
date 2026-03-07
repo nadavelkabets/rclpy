@@ -1,51 +1,69 @@
 import asyncio
 from types import TracebackType
-from typing import Any, Callable, Dict, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 from rclpy.client import Client
 from rclpy.clock import ClockChange, JumpThreshold
+from rclpy.context import Context
 from rclpy.duration import Duration
 from rclpy.executors import await_or_execute
-from rclpy.node import Node
+from rclpy.node import BaseNode
+from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile
 from rclpy.service import Service
 from rclpy.subscription import Subscription, SubscriptionCallbackUnion
 from rclpy.type_support import MsgT, Srv, SrvRequestT, SrvResponseT
 from rclpy.exceptions import TimeSourceChangedError
+from rclpy.qos import qos_profile_rosout_default
+from .async_client import AsyncClient
+from .async_service import AsyncService
+from .async_subscription import AsyncSubscription
 
 Entity = Union[Subscription, Service, Client]
 
-class AsyncNode(Node):
-    _tg: Optional[asyncio.TaskGroup] = None
-    _runners: Optional[Dict[Entity, asyncio.Task]] = None
-    _pending_sleeps: Optional[Set[asyncio.Future]] = None
+class AsyncNode(BaseNode):
+    def __init__(
+        self,
+        node_name: str,
+        *,
+        context: Optional[Context] = None,
+        cli_args: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+        use_global_arguments: bool = True,
+        enable_rosout: bool = True,
+        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
+        start_parameter_services: bool = True,
+        parameter_overrides: Optional[List[Parameter[Any]]] = None,
+        allow_undeclared_parameters: bool = False,
+        automatically_declare_parameters_from_overrides: bool = False,
+        enable_logger_service: bool = False
+    ) -> None:
+        super().__init__(
+            node_name=node_name,
+            context=context,
+            cli_args=cli_args,
+            namespace=namespace,
+            use_global_arguments=use_global_arguments,
+            enable_rosout=enable_rosout,
+            rosout_qos_profile=rosout_qos_profile,
+            start_parameter_services=start_parameter_services,
+            parameter_overrides=parameter_overrides,
+            allow_undeclared_parameters=allow_undeclared_parameters,
+            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
+            enable_logger_service=enable_logger_service,
+        )
+        self._tg: Optional[asyncio.TaskGroup] = None
+        self._runners: Dict[Entity, asyncio.Task] = {}
+        self._pending_sleeps: Set[asyncio.Future] = set()
+        self._subscriptions: Set[AsyncSubscription] = set()
+        self._clients: Set[AsyncClient] = set()
+        self._services: Set[AsyncService] = set()
 
-    def destroy_subscription(self, subscription: Subscription[Any]) -> None:
-        raise NotImplementedError("Use node.close_subscription(subscription)")
 
-    def destroy_service(self, service: Service[Any, Any]) -> None:
-        raise NotImplementedError("Use node.close_service(service)")
-
-    def destroy_client(self, client: Client[Any, Any]) -> None:
-        raise NotImplementedError("Use node.close_client(client)")
-
-    def destroy_node(self) -> None:
-        raise NotImplementedError("Use `async with node` context manager")
-
-    async def __aenter__(self) -> 'AsyncioNode':
-        self._runners = {}
-        self._pending_sleeps = set()
+    async def __aenter__(self) -> 'AsyncNode':
+        self.handle.__enter__()
         tg = asyncio.TaskGroup()
         self._tg = await tg.__aenter__()
-        for sub in list(self.subscriptions):
-            task = self._tg.create_task(self._run_subscription(sub))
-            self._runners[sub] = task
-        for srv in list(self.services):
-            task = self._tg.create_task(self._run_service(srv))
-            self._runners[srv] = task
-        for client in list(self.clients):
-            task = self._tg.create_task(self._run_client(client))
-            self._runners[client] = task
         return self
 
     async def __aexit__(
@@ -61,18 +79,17 @@ class AsyncNode(Node):
         try:
             await tg.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            Node.destroy_node(self)
+            self.handle.__exit__()
+            self.handle.destroy_when_not_in_use()
 
     async def close(self) -> None:
-        for future in self._pending_sleeps:
-            future.cancel()
         async with asyncio.TaskGroup() as tg:
-            for sub in list(self.subscriptions):
-                tg.create_task(self.close_subscription(sub))
-            for srv in list(self.services):
-                tg.create_task(self.close_service(srv))
-            for client in list(self.clients):
-                tg.create_task(self.close_client(client))
+            for sub in list(self._subscriptions):
+                tg.create_task(sub.close())
+            for cli in self._clients:
+                tg.create_task(cli.close())
+            for srv in self._services:
+                tg.create_task(srv.close())
 
     async def sleep(self, duration_sec: float) -> None:
         """
