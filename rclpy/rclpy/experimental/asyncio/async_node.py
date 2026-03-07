@@ -159,7 +159,7 @@ class AsyncNode(BaseNode):
         raw: bool = False,
         concurrent: bool = False,
         content_filter_options: Optional[ContentFilterOptions] = None,
-    ) -> AsyncSubscription:
+    ) -> AsyncSubscription[MsgT]:
         if self._tg is None:
             raise RuntimeError("Node context manager not active")
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
@@ -182,7 +182,7 @@ class AsyncNode(BaseNode):
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
         concurrent: bool = False,
-    ) -> AsyncService:
+    ) -> AsyncService[SrvRequestT, SrvResponseT]:
         if self._tg is None:
             raise RuntimeError("Node context manager not active")
 
@@ -201,7 +201,7 @@ class AsyncNode(BaseNode):
         srv_name: str,
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
-    ) -> AsyncClient:
+    ) -> AsyncClient[SrvRequestT, SrvResponseT]:
         if self._tg is None:
             raise RuntimeError("Node context manager not active")
 
