@@ -72,7 +72,7 @@ class AsyncNode(BaseNode):
         try:
             await tg.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            self.handle.__exit__()
+            self.handle.__exit__(exc_type, exc_val, exc_tb)
             self.handle.destroy_when_not_in_use()
 
     async def close(self) -> None:
@@ -157,7 +157,7 @@ class AsyncNode(BaseNode):
         qos_profile: Union[QoSProfile, int],
         *,
         raw: bool = False,
-        concurrent: bool = True,
+        concurrent: bool = False,
         content_filter_options: Optional[ContentFilterOptions] = None,
     ) -> AsyncSubscription:
         if self._tg is None:
@@ -181,7 +181,7 @@ class AsyncNode(BaseNode):
         callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
-        concurrent: bool = True,
+        concurrent: bool = False,
     ) -> AsyncService:
         if self._tg is None:
             raise RuntimeError("Node context manager not active")
