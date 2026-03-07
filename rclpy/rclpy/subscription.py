@@ -63,11 +63,94 @@ SubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallback[MsgT],
                                              GenericSubscriptionCallback[bytes]]
 
 
-class Subscription(Generic[MsgT]):
+class BaseSubscription(Generic[MsgT]):
+    """Shared state and query methods for subscriptions (executor and async)."""
 
     class CallbackType(Enum):
         MessageOnly = 0
         WithMessageInfo = 1
+
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         qos_profile: QoSProfile,
+         raw: bool,
+    ) -> None:
+        self.__subscription = subscription_impl
+        self.msg_type = msg_type
+        self.topic = topic
+        self.qos_profile = qos_profile
+        self.raw = raw
+
+    @property
+    def handle(self) -> '_rclpy.Subscription[MsgT]':
+        return self.__subscription
+
+    @staticmethod
+    def _detect_callback_type(callback: Callable) -> 'BaseSubscription.CallbackType':
+        """Detect whether a callback accepts (msg) or (msg, info)."""
+        try:
+            inspect.signature(callback).bind(object())
+            return BaseSubscription.CallbackType.MessageOnly
+        except TypeError:
+            pass
+        try:
+            inspect.signature(callback).bind(object(), object())
+            return BaseSubscription.CallbackType.WithMessageInfo
+        except TypeError:
+            pass
+        raise RuntimeError(
+            'Subscription callback should be callable with one argument '
+            '(message only) or two (message and message info)')
+
+    def get_publisher_count(self) -> int:
+        """Get the number of publishers that this subscription has."""
+        with self.handle:
+            return self.__subscription.get_publisher_count()
+
+    @property
+    def topic_name(self) -> str:
+        with self.handle:
+            return self.__subscription.get_topic_name()
+
+    @property
+    def logger_name(self) -> str:
+        """Get the name of the logger associated with the node of the subscription."""
+        with self.handle:
+            return self.__subscription.get_logger_name()
+
+    @property
+    def is_cft_enabled(self) -> bool:
+        """Check if content filtering is enabled for the subscription."""
+        with self.handle:
+            return self.__subscription.is_cft_enabled()
+
+    def set_content_filter(self, filter_expression: str, expression_parameters: list[str]) -> None:
+        """
+        Set the filter expression and expression parameters for the subscription.
+
+        :param filter_expression: The filter expression to set.
+        :param expression_parameters: The expression parameters to set.
+        :raises: RCLError if internal error occurred when calling the rcl function.
+        """
+        with self.handle:
+            self.__subscription.set_content_filter(filter_expression, expression_parameters)
+
+    def get_content_filter(self) -> ContentFilterOptions:
+        """
+        Get the filter expression and expression parameters for the subscription.
+
+        :return: ContentFilterOptions object containing the filter expression and expression
+            parameters.
+        :raises: RCLError if internal error occurred when calling the rcl function.
+        """
+        with self.handle:
+            return self.__subscription.get_content_filter()
+
+
+class Subscription(BaseSubscription[MsgT]):
 
     @overload
     def __init__(
@@ -137,27 +220,23 @@ class Subscription(Generic[MsgT]):
         :param raw: If ``True``, then received messages will be stored in raw binary
             representation.
         """
-        self.__subscription = subscription_impl
-        self.msg_type = msg_type
-        self.topic = topic
+        super().__init__(subscription_impl, msg_type, topic, qos_profile, raw)
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
-        self.qos_profile = qos_profile
-        self.raw = raw
 
         self.event_handlers = event_callbacks.create_event_handlers(
             callback_group, subscription_impl, topic)
 
-    def get_publisher_count(self) -> int:
-        """Get the number of publishers that this subscription has."""
-        with self.handle:
-            return self.__subscription.get_publisher_count()
-
     @property
-    def handle(self) -> '_rclpy.Subscription[MsgT]':
-        return self.__subscription
+    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
+        return self._callback
+
+    @callback.setter
+    def callback(self, value: SubscriptionCallbackUnion[MsgT]) -> None:
+        self._callback = value
+        self._callback_type = self._detect_callback_type(value)
 
     def destroy(self) -> None:
         """
@@ -169,68 +248,6 @@ class Subscription(Generic[MsgT]):
         for handler in self.event_handlers:
             handler.destroy()
         self.handle.destroy_when_not_in_use()
-
-    @property
-    def topic_name(self) -> str:
-        with self.handle:
-            return self.__subscription.get_topic_name()
-
-    @property
-    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
-        return self._callback
-
-    @callback.setter
-    def callback(self, value: SubscriptionCallbackUnion[MsgT]) -> None:
-        self._callback = value
-        self._callback_type = Subscription.CallbackType.MessageOnly
-        try:
-            inspect.signature(value).bind(object())
-            return
-        except TypeError:
-            pass
-        try:
-            inspect.signature(value).bind(object(), object())
-            self._callback_type = Subscription.CallbackType.WithMessageInfo
-            return
-        except TypeError:
-            pass
-        raise RuntimeError(
-            'Subscription.__init__(): callback should be either be callable with one argument'
-            '(to get only the message) or two (to get message and message info)')
-
-    @property
-    def logger_name(self) -> str:
-        """Get the name of the logger associated with the node of the subscription."""
-        with self.handle:
-            return self.__subscription.get_logger_name()
-
-    @property
-    def is_cft_enabled(self) -> bool:
-        """Check if content filtering is enabled for the subscription."""
-        with self.handle:
-            return self.__subscription.is_cft_enabled()
-
-    def set_content_filter(self, filter_expression: str, expression_parameters: list[str]) -> None:
-        """
-        Set the filter expression and expression parameters for the subscription.
-
-        :param filter_expression: The filter expression to set.
-        :param expression_parameters: The expression parameters to set.
-        :raises: RCLError if internal error occurred when calling the rcl function.
-        """
-        with self.handle:
-            self.__subscription.set_content_filter(filter_expression, expression_parameters)
-
-    def get_content_filter(self) -> ContentFilterOptions:
-        """
-        Get the filter expression and expression parameters for the subscription.
-
-        :return: ContentFilterOptions object containing the filter expression and expression
-            parameters.
-        :raises: RCLError if internal error occurred when calling the rcl function.
-        """
-        with self.handle:
-            return self.__subscription.get_content_filter()
 
     def __enter__(self) -> 'Subscription[MsgT]':
         return self
