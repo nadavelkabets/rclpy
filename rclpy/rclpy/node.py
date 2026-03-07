@@ -244,6 +244,120 @@ class BaseNode:
         """Get the nodes logger."""
         return self._logger
 
+    def _validate_topic_or_service_name(self, topic_or_service_name: str, *,
+                                        is_service: bool = False) -> None:
+        name = self.get_name()
+        namespace = self.get_namespace()
+        validate_node_name(name)
+        validate_namespace(namespace)
+        validate_topic_name(topic_or_service_name, is_service=is_service)
+        expanded_topic_or_service_name = expand_topic_name(topic_or_service_name, name, namespace)
+        validate_full_topic_name(expanded_topic_or_service_name, is_service=is_service)
+
+    def resolve_topic_name(self, topic: str, *, only_expand: bool = False) -> str:
+        """
+        Return a topic name expanded and remapped.
+
+        :param topic: Topic name to be expanded and remapped.
+        :param only_expand: If ``True``, remapping rules won't be applied.
+        :return: A fully qualified topic name,
+            the result of applying expansion and remapping to the given ``topic``.
+        """
+        with self.handle:
+            return _rclpy.rclpy_resolve_name(self.handle, topic, only_expand, False)
+
+    def resolve_service_name(
+        self, service: str, *, only_expand: bool = False
+    ) -> str:
+        """
+        Return a service name expanded and remapped.
+
+        :param service: Service name to be expanded and remapped.
+        :param only_expand: If ``True``, remapping rules won't be applied.
+        :return: A fully qualified service name,
+            the result of applying expansion and remapping to the given ``service``.
+        """
+        with self.handle:
+            return _rclpy.rclpy_resolve_name(self.handle, service, only_expand, True)
+
+    def _create_subscription_handle(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: QoSProfile,
+        *,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        content_filter_options: Optional[ContentFilterOptions] = None,
+    ) -> '_rclpy.Subscription':
+        try:
+            final_topic = self.resolve_topic_name(topic)
+        except RuntimeError:
+            try:
+                self._validate_topic_or_service_name(topic)
+            except InvalidTopicNameException as ex:
+                raise ex from None
+            raise
+        if qos_overriding_options is None:
+            qos_overriding_options = QoSOverridingOptions([])
+        _declare_qos_parameters(
+            Subscription, self, final_topic, qos_profile, qos_overriding_options)
+        check_is_valid_msg_type(msg_type)
+        failed = False
+        try:
+            with self.handle:
+                subscription_handle = _rclpy.Subscription(
+                    self.handle, msg_type, topic,
+                    qos_profile.get_c_qos_profile(), content_filter_options)
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(topic)
+        return subscription_handle
+
+    def _create_service_handle(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
+        check_is_valid_srv_type(srv_type)
+        failed = False
+        try:
+            with self.handle:
+                service_handle: '_rclpy.Service[SrvRequestT, SrvResponseT]' = _rclpy.Service(
+                    self.handle,
+                    srv_type,
+                    srv_name,
+                    qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(srv_name, is_service=True)
+        return service_handle
+
+    def _create_client_handle(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> '_rclpy.Client':
+        check_is_valid_srv_type(srv_type)
+        failed = False
+        try:
+            with self.handle:
+                client_handle = _rclpy.Client(
+                    self.handle,
+                    srv_type,
+                    srv_name,
+                    qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(srv_name, is_service=True)
+        return client_handle
+
 
 class Node(BaseNode):
     """
@@ -1535,16 +1649,6 @@ class Node(BaseNode):
         self._descriptors[name] = descriptor
         return self.get_parameter(name).get_parameter_value()
 
-    def _validate_topic_or_service_name(self, topic_or_service_name: str, *,
-                                        is_service: bool = False) -> None:
-        name = self.get_name()
-        namespace = self.get_namespace()
-        validate_node_name(name)
-        validate_namespace(namespace)
-        validate_topic_name(topic_or_service_name, is_service=is_service)
-        expanded_topic_or_service_name = expand_topic_name(topic_or_service_name, name, namespace)
-        validate_full_topic_name(expanded_topic_or_service_name, is_service=is_service)
-
     def add_waitable(self, waitable: Waitable[Any]) -> None:
         """
         Add a class that is capable of adding things to the wait set.
@@ -1562,32 +1666,6 @@ class Node(BaseNode):
         """
         self.__waitables.remove(waitable)
         self._wake_executor()
-
-    def resolve_topic_name(self, topic: str, *, only_expand: bool = False) -> str:
-        """
-        Return a topic name expanded and remapped.
-
-        :param topic: Topic name to be expanded and remapped.
-        :param only_expand: If ``True``, remapping rules won't be applied.
-        :return: A fully qualified topic name,
-            the result of applying expansion and remapping to the given ``topic``.
-        """
-        with self.handle:
-            return _rclpy.rclpy_resolve_name(self.handle, topic, only_expand, False)
-
-    def resolve_service_name(
-        self, service: str, *, only_expand: bool = False
-    ) -> str:
-        """
-        Return a service name expanded and remapped.
-
-        :param service: Service name to be expanded and remapped.
-        :param only_expand: If ``True``, remapping rules won't be applied.
-        :return: A fully qualified service name,
-            the result of applying expansion and remapping to the given ``service``.
-        """
-        with self.handle:
-            return _rclpy.rclpy_resolve_name(self.handle, service, only_expand, True)
 
     def create_publisher(
         self,
@@ -1725,37 +1803,12 @@ class Node(BaseNode):
         :param content_filter_options: The filter expression and parameters for content filtering.
         """
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
-
         callback_group = callback_group or self.default_callback_group
 
-        try:
-            final_topic = self.resolve_topic_name(topic)
-        except RuntimeError:
-            # if it's name validation error, raise a more appropriate exception.
-            try:
-                self._validate_topic_or_service_name(topic)
-            except InvalidTopicNameException as ex:
-                raise ex from None
-            # else reraise the previous exception
-            raise
-
-        if qos_overriding_options is None:
-            qos_overriding_options = QoSOverridingOptions([])
-        _declare_qos_parameters(
-            Subscription, self, final_topic, qos_profile, qos_overriding_options)
-
-        # this line imports the typesupport for the message module if not already done
-        failed = False
-        check_is_valid_msg_type(msg_type)
-        try:
-            with self.handle:
-                subscription_object = _rclpy.Subscription(
-                    self.handle, msg_type, topic, qos_profile.get_c_qos_profile(),
-                    content_filter_options)
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(topic)
+        subscription_object = self._create_subscription_handle(
+            msg_type, topic, qos_profile,
+            qos_overriding_options=qos_overriding_options,
+            content_filter_options=content_filter_options)
 
         try:
             subscription = Subscription(
@@ -1793,19 +1846,9 @@ class Node(BaseNode):
         """
         if callback_group is None:
             callback_group = self.default_callback_group
-        check_is_valid_srv_type(srv_type)
-        failed = False
-        try:
-            with self.handle:
-                client_impl = _rclpy.Client(
-                    self.handle,
-                    srv_type,
-                    srv_name,
-                    qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(srv_name, is_service=True)
+
+        client_impl = self._create_client_handle(
+            srv_type, srv_name, qos_profile=qos_profile)
 
         client = Client(
             self.context,
@@ -1838,19 +1881,9 @@ class Node(BaseNode):
         """
         if callback_group is None:
             callback_group = self.default_callback_group
-        check_is_valid_srv_type(srv_type)
-        failed = False
-        try:
-            with self.handle:
-                service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]' = _rclpy.Service(
-                    self.handle,
-                    srv_type,
-                    srv_name,
-                    qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(srv_name, is_service=True)
+
+        service_impl = self._create_service_handle(
+            srv_type, srv_name, qos_profile=qos_profile)
 
         service = Service(
             service_impl,
