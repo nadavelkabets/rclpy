@@ -22,7 +22,6 @@ import rclpy
 from rclpy.clock import Clock, ROSClock
 from rclpy.logging import LoggingSeverity
 from rclpy.time import Time
-from rclpy.time_source import TimeSource
 
 
 class TestLogging(unittest.TestCase):
@@ -126,9 +125,7 @@ class TestLogging(unittest.TestCase):
     def test_log_throttle_ros_clock(self) -> None:
         message_was_logged = []
         ros_clock = ROSClock()
-        time_source = TimeSource()
-        time_source.attach_clock(ros_clock)
-        time_source.ros_time_is_active = True
+        ros_clock._set_ros_time_is_active(True)
         for i in range(5):
             message_was_logged.append(rclpy.logging._root_logger.log(
                 'message_' + inspect.stack()[0][3] + '_' + str(i),

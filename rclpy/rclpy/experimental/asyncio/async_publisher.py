@@ -18,11 +18,11 @@ class AsyncPublisher(BasePublisher[MsgT]):
     ) -> None:
         super().__init__(publisher_impl, msg_type, topic, qos_profile)
         self._task: Optional[asyncio.Task] = None
-        self._close_event: Optional[asyncio.Event] = None
+        self._closing = False
+        self._close_event = asyncio.Event()
 
     async def _run(self) -> None:
         """Wait for close signal, then destroy the handle."""
-        self._close_event = asyncio.Event()
         try:
             await self._close_event.wait()
         finally:
@@ -33,5 +33,6 @@ class AsyncPublisher(BasePublisher[MsgT]):
         """Signal the publisher to shut down."""
         if self._task is None:
             raise RuntimeError("Entity is not running")
+        self._closing = True
         self._close_event.set()
         await self._task

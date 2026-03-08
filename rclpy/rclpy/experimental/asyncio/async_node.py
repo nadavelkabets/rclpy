@@ -60,6 +60,8 @@ class AsyncNode(BaseNode):
         self.handle.__enter__()
         tg = asyncio.TaskGroup()
         self._tg = await tg.__aenter__()
+        self._setup()
+        # TODO: Add TypeDescriptionService support for AsyncNode
         return self
 
     async def __aexit__(
@@ -147,7 +149,6 @@ class AsyncNode(BaseNode):
                 timer_handle.cancel()
 
     async def _run_entity(self, entity: Any, entity_set: set) -> None:
-        entity_set.add(entity)
         try:
             await entity._run()
         finally:
@@ -167,6 +168,7 @@ class AsyncNode(BaseNode):
             msg_type, topic, qos_profile)
 
         pub = AsyncPublisher(publisher_handle, msg_type, topic, qos_profile)
+        self._publishers.add(pub)
         pub._task = self._tg.create_task(self._run_entity(pub, self._publishers))
         return pub
 
@@ -192,6 +194,7 @@ class AsyncNode(BaseNode):
         sub = AsyncSubscription(
             subscription_handle, msg_type, topic, callback,
             qos_profile, raw, concurrent)
+        self._subscriptions.add(sub)
         sub._task = self._tg.create_task(self._run_entity(sub, self._subscriptions))
         return sub
 
@@ -213,6 +216,7 @@ class AsyncNode(BaseNode):
         srv = AsyncService(
             service_handle, srv_type, srv_name, callback,
             qos_profile, concurrent)
+        self._services.add(srv)
         srv._task = self._tg.create_task(self._run_entity(srv, self._services))
         return srv
 
@@ -231,5 +235,6 @@ class AsyncNode(BaseNode):
 
         client = AsyncClient(
             client_handle, srv_type, srv_name, qos_profile)
+        self._clients.add(client)
         client._task = self._tg.create_task(self._run_entity(client, self._clients))
         return client
