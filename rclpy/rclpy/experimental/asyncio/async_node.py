@@ -1,6 +1,6 @@
 import asyncio
 from types import TracebackType
-from typing import Any, Callable, Optional, Set, Type, Union
+from typing import Any, Awaitable, Callable, Optional, Set, Type, Union
 
 from rclpy.clock import ClockChange, JumpThreshold
 from rclpy.context import Context
@@ -9,6 +9,7 @@ from rclpy.exceptions import TimeSourceChangedError
 from rclpy.node import BaseNode
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, qos_profile_rosout_default, qos_profile_services_default
+from rclpy.subscription import AsyncGenericSubscriptionCallback
 from rclpy.subscription_content_filter_options import ContentFilterOptions
 from rclpy.type_support import MsgT, Srv, SrvRequestT, SrvResponseT
 
@@ -191,7 +192,7 @@ class AsyncNode(BaseNode):
         self,
         msg_type: Type[MsgT],
         topic: str,
-        callback: Callable,
+        callback: AsyncGenericSubscriptionCallback[MsgT],
         qos_profile: Union[QoSProfile, int],
         *,
         raw: bool = False,
@@ -217,7 +218,7 @@ class AsyncNode(BaseNode):
         self,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
         concurrent: bool = False,

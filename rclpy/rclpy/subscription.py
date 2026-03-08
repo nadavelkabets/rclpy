@@ -16,6 +16,7 @@
 from enum import Enum
 import inspect
 from types import TracebackType
+from typing import Awaitable
 from typing import Callable
 from typing import Generic
 from typing import Literal
@@ -59,8 +60,12 @@ MsgType = TypeVar('MsgType')
 T = TypeVar('T')
 GenericSubscriptionCallback: TypeAlias = Union[Callable[[T], None],
                                                Callable[[T, MessageInfo], None]]
+AsyncGenericSubscriptionCallback: TypeAlias = Union[Callable[[T], Awaitable[None]],
+                                                    Callable[[T, MessageInfo], Awaitable[None]]]
 SubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallback[MsgT],
-                                             GenericSubscriptionCallback[bytes]]
+                                             GenericSubscriptionCallback[bytes],
+                                             AsyncGenericSubscriptionCallback[MsgT],
+                                             AsyncGenericSubscriptionCallback[bytes]]
 
 
 class BaseSubscription(Generic[MsgT]):

@@ -20,6 +20,7 @@ import time
 
 from types import TracebackType
 from typing import Any
+from typing import Awaitable
 from typing import Callable
 from typing import Dict
 from typing import Final
@@ -87,6 +88,7 @@ from rclpy.qos import QoSProfile
 from rclpy.qos_overriding_options import _declare_qos_parameters
 from rclpy.qos_overriding_options import QoSOverridingOptions
 from rclpy.service import BaseService, Service
+from rclpy.subscription import AsyncGenericSubscriptionCallback
 from rclpy.subscription import BaseSubscription, GenericSubscriptionCallback
 from rclpy.subscription import Subscription
 from rclpy.subscription import SubscriptionCallbackUnion
@@ -1517,7 +1519,7 @@ class BaseNode(ABC):
         self,
         msg_type: Type[MsgT],
         topic: str,
-        callback: Callable[..., Any],
+        callback: AsyncGenericSubscriptionCallback[MsgT],
         qos_profile: Union[QoSProfile, int],
     ) -> BaseSubscription[MsgT]:
         ...
@@ -1527,7 +1529,7 @@ class BaseNode(ABC):
         self,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[..., Any],
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
     ) -> BaseService[SrvRequestT, SrvResponseT]:
@@ -1797,7 +1799,8 @@ class Node(BaseNode):
         self,
         msg_type: Type[MsgT],
         topic: str,
-        callback: GenericSubscriptionCallback[bytes],
+        callback: Union[GenericSubscriptionCallback[bytes],
+                        AsyncGenericSubscriptionCallback[bytes]],
         qos_profile: Union[QoSProfile, int],
         *,
         callback_group: Optional[CallbackGroup] = None,
@@ -1812,7 +1815,8 @@ class Node(BaseNode):
         self,
         msg_type: Type[MsgT],
         topic: str,
-        callback: GenericSubscriptionCallback[MsgT],
+        callback: Union[GenericSubscriptionCallback[MsgT],
+                        AsyncGenericSubscriptionCallback[MsgT]],
         qos_profile: Union[QoSProfile, int],
         *,
         callback_group: Optional[CallbackGroup] = None,
@@ -1914,7 +1918,8 @@ class Node(BaseNode):
         self,
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
+        callback: Union[Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
+                        Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]]],
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
         callback_group: Optional[CallbackGroup] = None

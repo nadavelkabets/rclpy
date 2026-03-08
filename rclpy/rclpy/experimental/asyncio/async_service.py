@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from typing import Any, Callable, Coroutine, Optional, Type
+from typing import Any, Awaitable, Callable, Optional, Type
 
 from rclpy.qos import QoSProfile
 from rclpy.service import BaseService
@@ -15,7 +15,7 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         service_impl: object,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[..., Coroutine],
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
         qos_profile: QoSProfile,
         concurrent: bool = False,
     ) -> None:

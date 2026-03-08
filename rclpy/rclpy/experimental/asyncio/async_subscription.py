@@ -1,9 +1,9 @@
 import asyncio
 import inspect
-from typing import Callable, Coroutine, Optional, Type
+from typing import Awaitable, Optional, Type
 
 from rclpy.qos import QoSProfile
-from rclpy.subscription import BaseSubscription
+from rclpy.subscription import AsyncGenericSubscriptionCallback, BaseSubscription
 from rclpy.type_support import MsgT
 
 
@@ -15,7 +15,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         subscription_impl: object,
         msg_type: Type[MsgT],
         topic: str,
-        callback: Callable[..., Coroutine],
+        callback: AsyncGenericSubscriptionCallback[MsgT],
         qos_profile: QoSProfile,
         raw: bool = False,
         concurrent: bool = False,
@@ -36,7 +36,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         self._loop.call_soon_threadsafe(self._read_event.set)
 
     @property
-    def callback(self) -> Callable[..., Coroutine]:
+    def callback(self) -> AsyncGenericSubscriptionCallback[MsgT]:
         return self._callback
 
     async def _messages(self):
@@ -56,7 +56,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
                 self.handle.clear_on_new_message_callback()
                 self.handle.destroy_when_not_in_use()
 
-    def _make_callback(self, msg_and_info: tuple) -> Coroutine:
+    def _make_callback(self, msg_and_info: tuple) -> Awaitable[None]:
         """Create a callback coroutine from a (msg, msg_info) tuple."""
         if self._callback_type is BaseSubscription.CallbackType.MessageOnly:
             return self._callback(msg_and_info[0])
