@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import math
 import time
 
@@ -78,7 +79,7 @@ from rclpy.logging_service import LoggingService
 from rclpy.parameter import (AllowableParameterValue, AllowableParameterValueT, Parameter,
                              PARAMETER_SEPARATOR_STRING)
 from rclpy.parameter_service import ParameterService
-from rclpy.publisher import Publisher
+from rclpy.publisher import BasePublisher, Publisher
 from rclpy.qos import qos_profile_parameter_events
 from rclpy.qos import qos_profile_rosout_default
 from rclpy.qos import qos_profile_services_default
@@ -127,7 +128,14 @@ NodeNameNonExistentError: TypeAlias = _rclpy.NodeNameNonExistentError
 ParameterInput: TypeAlias = Union[AllowableParameterValue, Parameter.Type, ParameterValue]
 
 
-class BaseNode:
+class BaseNode(ABC):
+
+    PARAM_REL_TOL = 1e-6
+    """
+    Relative tolerance for floating point parameter values' comparison.
+    See `math.isclose` documentation.
+    """
+
     def __init__(
         self,
         node_name: str,
@@ -279,302 +287,6 @@ class BaseNode:
         """
         with self.handle:
             return _rclpy.rclpy_resolve_name(self.handle, service, only_expand, True)
-
-    def _create_subscription_handle(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        qos_profile: QoSProfile,
-        *,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-        content_filter_options: Optional[ContentFilterOptions] = None,
-    ) -> '_rclpy.Subscription':
-        try:
-            final_topic = self.resolve_topic_name(topic)
-        except RuntimeError:
-            try:
-                self._validate_topic_or_service_name(topic)
-            except InvalidTopicNameException as ex:
-                raise ex from None
-            raise
-        if qos_overriding_options is None:
-            qos_overriding_options = QoSOverridingOptions([])
-        _declare_qos_parameters(
-            Subscription, self, final_topic, qos_profile, qos_overriding_options)
-        check_is_valid_msg_type(msg_type)
-        failed = False
-        try:
-            with self.handle:
-                subscription_handle = _rclpy.Subscription(
-                    self.handle, msg_type, topic,
-                    qos_profile.get_c_qos_profile(), content_filter_options)
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(topic)
-        return subscription_handle
-
-    def _create_service_handle(
-        self,
-        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-    ) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
-        check_is_valid_srv_type(srv_type)
-        failed = False
-        try:
-            with self.handle:
-                service_handle: '_rclpy.Service[SrvRequestT, SrvResponseT]' = _rclpy.Service(
-                    self.handle,
-                    srv_type,
-                    srv_name,
-                    qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(srv_name, is_service=True)
-        return service_handle
-
-    def _create_publisher_handle(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        qos_profile: QoSProfile,
-        *,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-    ) -> '_rclpy.Publisher':
-        try:
-            final_topic = self.resolve_topic_name(topic)
-        except RuntimeError:
-            try:
-                self._validate_topic_or_service_name(topic)
-            except InvalidTopicNameException as ex:
-                raise ex from None
-            raise
-        if qos_overriding_options is None:
-            qos_overriding_options = QoSOverridingOptions([])
-        _declare_qos_parameters(
-            Publisher, self, final_topic, qos_profile, qos_overriding_options)
-        check_is_valid_msg_type(msg_type)
-        failed = False
-        try:
-            with self.handle:
-                publisher_handle = _rclpy.Publisher(
-                    self.handle, msg_type, topic, qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(topic)
-        return publisher_handle
-
-    def _create_client_handle(
-        self,
-        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-    ) -> '_rclpy.Client':
-        check_is_valid_srv_type(srv_type)
-        failed = False
-        try:
-            with self.handle:
-                client_handle = _rclpy.Client(
-                    self.handle,
-                    srv_type,
-                    srv_name,
-                    qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(srv_name, is_service=True)
-        return client_handle
-
-
-class Node(BaseNode):
-    """
-    A Node in the ROS graph.
-
-    A Node is the primary entrypoint in a ROS system for communication.
-    It can be used to create ROS entities such as publishers, subscribers, services, etc.
-    """
-
-    PARAM_REL_TOL = 1e-6
-    """
-    Relative tolerance for floating point parameter values' comparison.
-    See `math.isclose` documentation.
-    """
-
-    def __init__(
-        self,
-        node_name: str,
-        *,
-        context: Optional[Context] = None,
-        cli_args: Optional[List[str]] = None,
-        namespace: Optional[str] = None,
-        use_global_arguments: bool = True,
-        enable_rosout: bool = True,
-        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
-        start_parameter_services: bool = True,
-        parameter_overrides: Optional[List[Parameter[Any]]] = None,
-        allow_undeclared_parameters: bool = False,
-        automatically_declare_parameters_from_overrides: bool = False,
-        enable_logger_service: bool = False
-    ) -> None:
-        """
-        Create a Node.
-
-        :param node_name: A name to give to this node. Validated by :func:`validate_node_name`.
-        :param context: The context to be associated with, or ``None`` for the default global
-            context.
-        :param cli_args: A list of strings of command line args to be used only by this node.
-            These arguments are used to extract remappings used by the node and other ROS specific
-            settings, as well as user defined non-ROS arguments.
-        :param namespace: The namespace to which relative topic and service names will be prefixed.
-            Validated by :func:`validate_namespace`.
-        :param use_global_arguments: ``False`` if the node should ignore process-wide command line
-            args.
-        :param enable_rosout: ``False`` if the node should ignore rosout logging.
-        :param rosout_qos_profile: A QoSProfile or a history depth to apply to rosout publisher.
-            In the case that a history depth is provided, the QoS history is set to KEEP_LAST
-            the QoS history depth is set to the value of the parameter,
-            and all other QoS settings are set to their default value.
-        :param start_parameter_services: ``False`` if the node should not create parameter
-            services.
-        :param parameter_overrides: A list of overrides for initial values for parameters declared
-            on the node.
-        :param allow_undeclared_parameters: True if undeclared parameters are allowed.
-            This flag affects the behavior of parameter-related operations.
-        :param automatically_declare_parameters_from_overrides: If True, the "parameter overrides"
-            will be used to implicitly declare parameters on the node during creation.
-        :param enable_logger_service: ``True`` if ROS2 services are created to allow external nodes
-            to get and set logger levels of this node. Otherwise, logger levels are only managed
-            locally. That is, logger levels cannot be changed remotely.
-        """
-        super().__init__(
-            node_name=node_name,
-            context=context,
-            cli_args=cli_args,
-            namespace=namespace,
-            use_global_arguments=use_global_arguments,
-            enable_rosout=enable_rosout,
-            rosout_qos_profile=rosout_qos_profile,
-            start_parameter_services=start_parameter_services,
-            parameter_overrides=parameter_overrides,
-            allow_undeclared_parameters=allow_undeclared_parameters,
-            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
-            enable_logger_service=enable_logger_service,
-        )
-        self._publishers: List[Publisher[Any]] = []
-        self._subscriptions: List[Subscription[Any]] = []
-        self._clients: List[Client[Any, Any]] = []
-        self._services: List[Service[Any, Any]] = []
-        self._timers: List[Timer] = []
-        self._guards: List[GuardCondition] = []
-        self.__waitables: List[Waitable[Any]] = []
-        self._default_callback_group = MutuallyExclusiveCallbackGroup()
-        self._rate_group = ReentrantCallbackGroup()
-        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
-
-        self._parameter_event_publisher: Optional[Publisher[ParameterEvent]] = \
-            self.create_publisher(ParameterEvent, '/parameter_events',
-                                  qos_profile_parameter_events)
-
-        if automatically_declare_parameters_from_overrides:
-            self.declare_parameters(
-                '',
-                [
-                    (name, param.value, ParameterDescriptor())
-                    for name, param in self._parameter_overrides.items()],
-                ignore_override=True,
-            )
-
-        # Init a time source.
-        # Note: parameter overrides and parameter event publisher need to be ready at this point
-        # to be able to declare 'use_sim_time' if it was not declared yet.
-        self._time_source = TimeSource(node=self)
-        self._time_source.attach_clock(self._clock)
-
-        if start_parameter_services:
-            self._parameter_service = ParameterService(self)
-
-        if enable_logger_service:
-            self._logger_service = LoggingService(self)
-
-        self._type_description_service = TypeDescriptionService(self)
-
-        self._context.track_node(self)
-
-    @property
-    def publishers(self) -> Iterator[Publisher[Any]]:
-        """Get publishers that have been created on this node."""
-        yield from self._publishers
-
-    @property
-    def subscriptions(self) -> Iterator[Subscription[Any]]:
-        """Get subscriptions that have been created on this node."""
-        yield from self._subscriptions
-
-    @property
-    def clients(self) -> Iterator[Client[Any, Any]]:
-        """Get clients that have been created on this node."""
-        yield from self._clients
-
-    @property
-    def services(self) -> Iterator[Service[Any, Any]]:
-        """Get services that have been created on this node."""
-        yield from self._services
-
-    @property
-    def timers(self) -> Iterator[Timer]:
-        """Get timers that have been created on this node."""
-        yield from self._timers
-
-    @property
-    def guards(self) -> Iterator[GuardCondition]:
-        """Get guards that have been created on this node."""
-        yield from self._guards
-
-    @property
-    def waitables(self) -> Iterator[Waitable[Any]]:
-        """Get waitables that have been created on this node."""
-        yield from self.__waitables
-
-    @property
-    def executor(self) -> Optional[Executor]:
-        """Get the executor if the node has been added to one, else return ``None``."""
-        if self.__executor_weakref:
-            return self.__executor_weakref()
-        return None
-
-    @executor.setter
-    def executor(self, new_executor: Optional[Executor]) -> None:
-        """Set or change the executor the node belongs to."""
-        current_executor = self.executor
-        if current_executor == new_executor:
-            return
-        if current_executor is not None:
-            current_executor.remove_node(self)
-        if new_executor is None:
-            self.__executor_weakref = None
-        else:
-            new_executor.add_node(self)
-            self.__executor_weakref = weakref.ref(new_executor)
-
-    def _wake_executor(self) -> None:
-        executor = self.executor
-        if executor:
-            executor.wake()
-
-    @property
-    def default_callback_group(self) -> CallbackGroup:
-        """
-        Get the default callback group.
-
-        If no other callback group is provided when the a ROS entity is created with the node,
-        then it is added to the default callback group.
-        """
-        return self._default_callback_group
 
     @overload
     def declare_parameter(self, name: str, value: AllowableParameterValueT,
@@ -1680,6 +1392,307 @@ class Node(BaseNode):
 
         self._descriptors[name] = descriptor
         return self.get_parameter(name).get_parameter_value()
+
+    def _create_subscription_handle(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: QoSProfile,
+        *,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        content_filter_options: Optional[ContentFilterOptions] = None,
+    ) -> '_rclpy.Subscription':
+        try:
+            final_topic = self.resolve_topic_name(topic)
+        except RuntimeError:
+            try:
+                self._validate_topic_or_service_name(topic)
+            except InvalidTopicNameException as ex:
+                raise ex from None
+            raise
+        if qos_overriding_options is None:
+            qos_overriding_options = QoSOverridingOptions([])
+        _declare_qos_parameters(
+            Subscription, self, final_topic, qos_profile, qos_overriding_options)
+        check_is_valid_msg_type(msg_type)
+        failed = False
+        try:
+            with self.handle:
+                subscription_handle = _rclpy.Subscription(
+                    self.handle, msg_type, topic,
+                    qos_profile.get_c_qos_profile(), content_filter_options)
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(topic)
+        return subscription_handle
+
+    def _create_service_handle(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
+        check_is_valid_srv_type(srv_type)
+        failed = False
+        try:
+            with self.handle:
+                service_handle: '_rclpy.Service[SrvRequestT, SrvResponseT]' = _rclpy.Service(
+                    self.handle,
+                    srv_type,
+                    srv_name,
+                    qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(srv_name, is_service=True)
+        return service_handle
+
+    def _create_publisher_handle(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: QoSProfile,
+        *,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+    ) -> '_rclpy.Publisher':
+        try:
+            final_topic = self.resolve_topic_name(topic)
+        except RuntimeError:
+            try:
+                self._validate_topic_or_service_name(topic)
+            except InvalidTopicNameException as ex:
+                raise ex from None
+            raise
+        if qos_overriding_options is None:
+            qos_overriding_options = QoSOverridingOptions([])
+        _declare_qos_parameters(
+            Publisher, self, final_topic, qos_profile, qos_overriding_options)
+        check_is_valid_msg_type(msg_type)
+        failed = False
+        try:
+            with self.handle:
+                publisher_handle = _rclpy.Publisher(
+                    self.handle, msg_type, topic, qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(topic)
+        return publisher_handle
+
+    def _create_client_handle(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> '_rclpy.Client':
+        check_is_valid_srv_type(srv_type)
+        failed = False
+        try:
+            with self.handle:
+                client_handle = _rclpy.Client(
+                    self.handle,
+                    srv_type,
+                    srv_name,
+                    qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(srv_name, is_service=True)
+        return client_handle
+
+    @abstractmethod
+    def create_publisher(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: Union[QoSProfile, int],
+    ) -> BasePublisher[MsgT]:
+        ...
+
+    def _setup(self) -> None:
+        self._parameter_event_publisher: BasePublisher[ParameterEvent] = \
+            self.create_publisher(ParameterEvent, '/parameter_events',
+                                  qos_profile_parameter_events)
+
+        if self._automatically_declare_parameters_from_overrides:
+            self.declare_parameters(
+                '',
+                [
+                    (name, param.value, ParameterDescriptor())
+                    for name, param in self._parameter_overrides.items()],
+                ignore_override=True,
+            )
+
+        # Parameter overrides and parameter event publisher need to be ready at this point
+        # to be able to declare 'use_sim_time' if it was not declared yet.
+        self._time_source = TimeSource(node=self)
+        self._time_source.attach_clock(self._clock)
+
+
+class Node(BaseNode):
+    """
+    A Node in the ROS graph.
+
+    A Node is the primary entrypoint in a ROS system for communication.
+    It can be used to create ROS entities such as publishers, subscribers, services, etc.
+    """
+
+    def __init__(
+        self,
+        node_name: str,
+        *,
+        context: Optional[Context] = None,
+        cli_args: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+        use_global_arguments: bool = True,
+        enable_rosout: bool = True,
+        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
+        start_parameter_services: bool = True,
+        parameter_overrides: Optional[List[Parameter[Any]]] = None,
+        allow_undeclared_parameters: bool = False,
+        automatically_declare_parameters_from_overrides: bool = False,
+        enable_logger_service: bool = False
+    ) -> None:
+        """
+        Create a Node.
+
+        :param node_name: A name to give to this node. Validated by :func:`validate_node_name`.
+        :param context: The context to be associated with, or ``None`` for the default global
+            context.
+        :param cli_args: A list of strings of command line args to be used only by this node.
+            These arguments are used to extract remappings used by the node and other ROS specific
+            settings, as well as user defined non-ROS arguments.
+        :param namespace: The namespace to which relative topic and service names will be prefixed.
+            Validated by :func:`validate_namespace`.
+        :param use_global_arguments: ``False`` if the node should ignore process-wide command line
+            args.
+        :param enable_rosout: ``False`` if the node should ignore rosout logging.
+        :param rosout_qos_profile: A QoSProfile or a history depth to apply to rosout publisher.
+            In the case that a history depth is provided, the QoS history is set to KEEP_LAST
+            the QoS history depth is set to the value of the parameter,
+            and all other QoS settings are set to their default value.
+        :param start_parameter_services: ``False`` if the node should not create parameter
+            services.
+        :param parameter_overrides: A list of overrides for initial values for parameters declared
+            on the node.
+        :param allow_undeclared_parameters: True if undeclared parameters are allowed.
+            This flag affects the behavior of parameter-related operations.
+        :param automatically_declare_parameters_from_overrides: If True, the "parameter overrides"
+            will be used to implicitly declare parameters on the node during creation.
+        :param enable_logger_service: ``True`` if ROS2 services are created to allow external nodes
+            to get and set logger levels of this node. Otherwise, logger levels are only managed
+            locally. That is, logger levels cannot be changed remotely.
+        """
+        super().__init__(
+            node_name=node_name,
+            context=context,
+            cli_args=cli_args,
+            namespace=namespace,
+            use_global_arguments=use_global_arguments,
+            enable_rosout=enable_rosout,
+            rosout_qos_profile=rosout_qos_profile,
+            start_parameter_services=start_parameter_services,
+            parameter_overrides=parameter_overrides,
+            allow_undeclared_parameters=allow_undeclared_parameters,
+            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
+            enable_logger_service=enable_logger_service,
+        )
+        self._publishers: List[Publisher[Any]] = []
+        self._subscriptions: List[Subscription[Any]] = []
+        self._clients: List[Client[Any, Any]] = []
+        self._services: List[Service[Any, Any]] = []
+        self._timers: List[Timer] = []
+        self._guards: List[GuardCondition] = []
+        self.__waitables: List[Waitable[Any]] = []
+        self._default_callback_group = MutuallyExclusiveCallbackGroup()
+        self._rate_group = ReentrantCallbackGroup()
+        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
+
+        self._setup()
+
+        if start_parameter_services:
+            self._parameter_service = ParameterService(self)
+
+        if enable_logger_service:
+            self._logger_service = LoggingService(self)
+
+        self._type_description_service = TypeDescriptionService(self)
+
+        self._context.track_node(self)
+
+    @property
+    def publishers(self) -> Iterator[Publisher[Any]]:
+        """Get publishers that have been created on this node."""
+        yield from self._publishers
+
+    @property
+    def subscriptions(self) -> Iterator[Subscription[Any]]:
+        """Get subscriptions that have been created on this node."""
+        yield from self._subscriptions
+
+    @property
+    def clients(self) -> Iterator[Client[Any, Any]]:
+        """Get clients that have been created on this node."""
+        yield from self._clients
+
+    @property
+    def services(self) -> Iterator[Service[Any, Any]]:
+        """Get services that have been created on this node."""
+        yield from self._services
+
+    @property
+    def timers(self) -> Iterator[Timer]:
+        """Get timers that have been created on this node."""
+        yield from self._timers
+
+    @property
+    def guards(self) -> Iterator[GuardCondition]:
+        """Get guards that have been created on this node."""
+        yield from self._guards
+
+    @property
+    def waitables(self) -> Iterator[Waitable[Any]]:
+        """Get waitables that have been created on this node."""
+        yield from self.__waitables
+
+    @property
+    def executor(self) -> Optional[Executor]:
+        """Get the executor if the node has been added to one, else return ``None``."""
+        if self.__executor_weakref:
+            return self.__executor_weakref()
+        return None
+
+    @executor.setter
+    def executor(self, new_executor: Optional[Executor]) -> None:
+        """Set or change the executor the node belongs to."""
+        current_executor = self.executor
+        if current_executor == new_executor:
+            return
+        if current_executor is not None:
+            current_executor.remove_node(self)
+        if new_executor is None:
+            self.__executor_weakref = None
+        else:
+            new_executor.add_node(self)
+            self.__executor_weakref = weakref.ref(new_executor)
+
+    def _wake_executor(self) -> None:
+        executor = self.executor
+        if executor:
+            executor.wake()
+
+    @property
+    def default_callback_group(self) -> CallbackGroup:
+        """
+        Get the default callback group.
+
+        If no other callback group is provided when the a ROS entity is created with the node,
+        then it is added to the default callback group.
+        """
+        return self._default_callback_group
 
     def add_waitable(self, waitable: Waitable[Any]) -> None:
         """
