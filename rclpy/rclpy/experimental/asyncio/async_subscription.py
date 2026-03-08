@@ -29,11 +29,10 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         self._closing = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._read_event: Optional[asyncio.Event] = None
+        self._read_event = asyncio.Event()
 
     def _on_new_message(self, _num_waiting: int) -> None:
         assert self._loop is not None
-        assert self._read_event is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
     @property
@@ -66,7 +65,6 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     async def _run(self) -> None:
         """DDS bridge read loop for subscriptions."""
         self._loop = asyncio.get_running_loop()
-        self._read_event = asyncio.Event()
 
         try:
             if self._concurrent:

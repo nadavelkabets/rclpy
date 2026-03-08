@@ -150,21 +150,20 @@ async def test_sleep_cancelled_on_close():
         with pytest.raises(asyncio.CancelledError):
             await sleep_task
 
-# TODO: uncomment after adding the parameter server
-# @pytest.mark.asyncio
-# async def test_sleep_raises_on_clock_change():
-#     """A wall clock sleep raises TimeSourceChangedError when sim time is activated."""
-#     async with AsyncNode("test_sleep_clock_change_node") as node:
-#         try:
-#             sleep_task = asyncio.ensure_future(node.sleep(999))
-#             await asyncio.sleep(0.05)  # let sleep start
+@pytest.mark.asyncio
+async def test_sleep_raises_on_clock_change():
+    """A wall clock sleep raises TimeSourceChangedError when sim time is activated."""
+    async with AsyncNode("test_sleep_clock_change_node") as node:
+        try:
+            sleep_task = asyncio.ensure_future(node.sleep(999))
+            await asyncio.sleep(0.05)  # let sleep start
 
-#             # Activate sim time — triggers ROS_TIME_ACTIVATED jump callback
-#             node.set_parameters([Parameter(
-#                 "use_sim_time", Parameter.Type.BOOL, True)])
+            # Activate sim time — triggers ROS_TIME_ACTIVATED jump callback
+            node.set_parameters([Parameter(
+                "use_sim_time", Parameter.Type.BOOL, True)])
 
-#             async with asyncio.timeout(5):
-#                 with pytest.raises(TimeSourceChangedError):
-#                     await sleep_task
-#         finally:
-#             await node.close()
+            async with asyncio.timeout(5):
+                with pytest.raises(TimeSourceChangedError):
+                    await sleep_task
+        finally:
+            await node.close()

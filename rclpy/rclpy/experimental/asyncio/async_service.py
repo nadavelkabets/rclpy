@@ -27,11 +27,10 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         self._closing = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._read_event: Optional[asyncio.Event] = None
+        self._read_event = asyncio.Event()
 
     def _on_new_request(self, _num_waiting: int) -> None:
         assert self._loop is not None
-        assert self._read_event is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
     async def _handle_request(
@@ -62,7 +61,6 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
     async def _run(self) -> None:
         """DDS bridge read loop for services."""
         self._loop = asyncio.get_running_loop()
-        self._read_event = asyncio.Event()
 
         try:
             if self._concurrent:

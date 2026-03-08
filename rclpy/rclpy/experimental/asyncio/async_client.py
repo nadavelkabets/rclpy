@@ -21,11 +21,10 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         self._closing = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._read_event: Optional[asyncio.Event] = None
+        self._read_event = asyncio.Event()
 
     def _on_new_response(self, _num_waiting: int) -> None:
         assert self._loop is not None
-        assert self._read_event is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
     async def wait_for_service(self, timeout_sec: Optional[float] = None) -> None:
@@ -74,7 +73,6 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     async def _run(self) -> None:
         """DDS bridge response loop for clients."""
         self._loop = asyncio.get_running_loop()
-        self._read_event = asyncio.Event()
 
         try:
             async for header, response in self._responses():

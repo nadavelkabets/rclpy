@@ -51,7 +51,7 @@ from rcl_interfaces.srv import ListParameters
 from rclpy.callback_groups import CallbackGroup
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.client import Client
+from rclpy.client import BaseClient, Client
 from rclpy.clock import Clock
 from rclpy.clock import ROSClock
 from rclpy.constants import S_TO_NS
@@ -86,8 +86,8 @@ from rclpy.qos import qos_profile_services_default
 from rclpy.qos import QoSProfile
 from rclpy.qos_overriding_options import _declare_qos_parameters
 from rclpy.qos_overriding_options import QoSOverridingOptions
-from rclpy.service import Service
-from rclpy.subscription import GenericSubscriptionCallback
+from rclpy.service import BaseService, Service
+from rclpy.subscription import BaseSubscription, GenericSubscriptionCallback
 from rclpy.subscription import Subscription
 from rclpy.subscription import SubscriptionCallbackUnion
 from rclpy.subscription_content_filter_options import ContentFilterOptions
@@ -197,7 +197,7 @@ class BaseNode(ABC):
                 validate_namespace(namespace)
                 # Should not get to this point
                 raise RuntimeError('rclpy_create_node failed for unknown reason')
-            
+
         with self.__node:
             self._logger = get_logger(self.__node.logger_name())
 
@@ -1512,6 +1512,37 @@ class BaseNode(ABC):
     ) -> BasePublisher[MsgT]:
         ...
 
+    @abstractmethod
+    def create_subscription(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        callback: Callable[..., Any],
+        qos_profile: Union[QoSProfile, int],
+    ) -> BaseSubscription[MsgT]:
+        ...
+
+    @abstractmethod
+    def create_service(
+        self,
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Callable[..., Any],
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> BaseService[SrvRequestT, SrvResponseT]:
+        ...
+
+    @abstractmethod
+    def create_client(
+        self,
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> BaseClient[SrvRequestT, SrvResponseT]:
+        ...
+
     def _setup(self) -> None:
         self._parameter_event_publisher: BasePublisher[ParameterEvent] = \
             self.create_publisher(ParameterEvent, '/parameter_events',
@@ -1528,8 +1559,14 @@ class BaseNode(ABC):
 
         # Parameter overrides and parameter event publisher need to be ready at this point
         # to be able to declare 'use_sim_time' if it was not declared yet.
-        self._time_source = TimeSource(node=self)
+        self._time_source = TimeSource(self)
         self._time_source.attach_clock(self._clock)
+
+        if self._start_parameter_services:
+            self._parameter_service = ParameterService(self)
+
+        if self._enable_logger_service:
+            self._logger_service = LoggingService(self)
 
 
 class Node(BaseNode):
@@ -1612,12 +1649,6 @@ class Node(BaseNode):
         self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
 
         self._setup()
-
-        if start_parameter_services:
-            self._parameter_service = ParameterService(self)
-
-        if enable_logger_service:
-            self._logger_service = LoggingService(self)
 
         self._type_description_service = TypeDescriptionService(self)
 
