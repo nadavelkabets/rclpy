@@ -28,21 +28,16 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         assert self._read_event is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
-    def wait_for_service(self, timeout_sec: Optional[float] = None) -> bool:
+    async def wait_for_service(self, timeout_sec: Optional[float] = None) -> None:
         """
-        Wait for a service server to become ready (blocking).
+        Wait for a service server to become ready.
 
         :param timeout_sec: Seconds to wait. If ``None``, then wait forever.
-        :return: ``True`` if server became ready, ``False`` on timeout.
+        :raises asyncio.TimeoutError: If the timeout expires before the service is ready.
         """
-        import time
-        sleep_time = 0.25
-        if timeout_sec is None:
-            timeout_sec = float('inf')
-        while not self.service_is_ready() and timeout_sec > 0.0:
-            time.sleep(sleep_time)
-            timeout_sec -= sleep_time
-        return self.service_is_ready()
+        async with asyncio.timeout(timeout_sec):
+            while not self.service_is_ready():
+                await asyncio.sleep(0.1)
 
     async def call(self, request: SrvRequestT) -> SrvResponseT:
         """Send a service request and await the response."""
@@ -79,19 +74,21 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     async def _run(self) -> None:
         """DDS bridge response loop for clients."""
         self._loop = asyncio.get_running_loop()
-        self._task = asyncio.current_task()
         self._read_event = asyncio.Event()
 
-        async for header, response in self._responses():
-            future = self._pending_requests.get(
-                header.request_id.sequence_number)
-            if future is not None:
-                future.set_result(response)
+        try:
+            async for header, response in self._responses():
+                future = self._pending_requests.get(
+                    header.request_id.sequence_number)
+                if future is not None:
+                    future.set_result(response)
+        finally:
+            self._task = None
 
     async def close(self) -> None:
         """Signal the response loop to stop and cancel pending requests."""
-        if self._task is not None:
-            self._closing = True
-            self._read_event.set()
-            await self._task
-            self._task = None
+        if self._task is None:
+            raise RuntimeError("Entity is not running")
+        self._closing = True
+        self._read_event.set()
+        await self._task

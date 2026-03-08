@@ -66,21 +66,23 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     async def _run(self) -> None:
         """DDS bridge read loop for subscriptions."""
         self._loop = asyncio.get_running_loop()
-        self._task = asyncio.current_task()
         self._read_event = asyncio.Event()
 
-        if self._concurrent:
-            async with asyncio.TaskGroup() as tg:
+        try:
+            if self._concurrent:
+                async with asyncio.TaskGroup() as tg:
+                    async for msg_and_info in self._messages():
+                        tg.create_task(self._make_callback(msg_and_info))
+            else:
                 async for msg_and_info in self._messages():
-                    tg.create_task(self._make_callback(msg_and_info))
-        else:
-            async for msg_and_info in self._messages():
-                await self._make_callback(msg_and_info)
+                    await self._make_callback(msg_and_info)
+        finally:
+            self._task = None
 
     async def close(self) -> None:
         """Signal the read loop to stop and wait for in-flight callbacks."""
-        if self._task is not None:
-            self._closing = True
-            self._read_event.set()
-            await self._task
-            self._task = None
+        if self._task is None:
+            raise RuntimeError("Entity is not running")
+        self._closing = True
+        self._read_event.set()
+        await self._task
