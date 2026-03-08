@@ -33,7 +33,7 @@ class AsyncPublisher(BasePublisher[MsgT]):
     async def close(self) -> None:
         """Signal the publisher to shut down."""
         if self._task is None:
-            raise RuntimeError("Entity is not running")
+            return
         self._closing = True
         self._close_event.set()
         await self._task

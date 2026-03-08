@@ -80,7 +80,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     async def close(self) -> None:
         """Signal the read loop to stop and wait for in-flight callbacks."""
         if self._task is None:
-            raise RuntimeError("Entity is not running")
+            return
         self._closing = True
         self._read_event.set()
         await self._task

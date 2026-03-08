@@ -40,9 +40,10 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
 
     async def call(self, request: SrvRequestT) -> SrvResponseT:
         """Send a service request and await the response."""
-        if self._loop is None:
-            raise RuntimeError("Client is not running")
-        future: asyncio.Future[SrvResponseT] = self._loop.create_future()
+        if self._task is None:
+            raise RuntimeError('Client is not running')
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[SrvResponseT] = loop.create_future()
         sequence_number = self.handle.send_request(request)
         self._pending_requests[sequence_number] = future
         try:
@@ -86,7 +87,7 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     async def close(self) -> None:
         """Signal the response loop to stop and cancel pending requests."""
         if self._task is None:
-            raise RuntimeError("Entity is not running")
+            return
         self._closing = True
         self._read_event.set()
         await self._task
