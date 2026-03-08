@@ -13,6 +13,7 @@ from rclpy.subscription_content_filter_options import ContentFilterOptions
 from rclpy.type_support import MsgT, Srv, SrvRequestT, SrvResponseT
 
 from .async_client import AsyncClient
+from .async_publisher import AsyncPublisher
 from .async_service import AsyncService
 from .async_subscription import AsyncSubscription
 
@@ -49,6 +50,7 @@ class AsyncNode(BaseNode):
             enable_logger_service=enable_logger_service,
         )
         self._tg: Optional[asyncio.TaskGroup] = None
+        self._publishers: Set[AsyncPublisher] = set()
         self._subscriptions: Set[AsyncSubscription] = set()
         self._services: Set[AsyncService] = set()
         self._clients: Set[AsyncClient] = set()
@@ -76,14 +78,16 @@ class AsyncNode(BaseNode):
             self.handle.destroy_when_not_in_use()
 
     async def close(self) -> None:
-        for future in list(self._pending_sleeps):
+        for future in self._pending_sleeps:
             future.cancel()
         async with asyncio.TaskGroup() as tg:
-            for sub in list(self._subscriptions):
+            for pub in self._publishers:
+                tg.create_task(pub.close())
+            for sub in self._subscriptions:
                 tg.create_task(sub.close())
-            for srv in list(self._services):
+            for srv in self._services:
                 tg.create_task(srv.close())
-            for cli in list(self._clients):
+            for cli in self._clients:
                 tg.create_task(cli.close())
 
     async def sleep(self, duration_sec: float) -> None:
@@ -149,6 +153,23 @@ class AsyncNode(BaseNode):
         finally:
             entity_set.discard(entity)
 
+    def create_publisher(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: Union[QoSProfile, int],
+    ) -> AsyncPublisher[MsgT]:
+        if self._tg is None:
+            raise RuntimeError("Node context manager not active")
+        qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
+
+        publisher_handle = self._create_publisher_handle(
+            msg_type, topic, qos_profile)
+
+        pub = AsyncPublisher(publisher_handle, msg_type, topic, qos_profile)
+        pub._task = self._tg.create_task(self._run_entity(pub, self._publishers))
+        return pub
+
     def create_subscription(
         self,
         msg_type: Type[MsgT],
@@ -171,7 +192,7 @@ class AsyncNode(BaseNode):
         sub = AsyncSubscription(
             subscription_handle, msg_type, topic, callback,
             qos_profile, raw, concurrent)
-        self._tg.create_task(self._run_entity(sub, self._subscriptions))
+        sub._task = self._tg.create_task(self._run_entity(sub, self._subscriptions))
         return sub
 
     def create_service(
@@ -192,7 +213,7 @@ class AsyncNode(BaseNode):
         srv = AsyncService(
             service_handle, srv_type, srv_name, callback,
             qos_profile, concurrent)
-        self._tg.create_task(self._run_entity(srv, self._services))
+        srv._task = self._tg.create_task(self._run_entity(srv, self._services))
         return srv
 
     def create_client(
@@ -210,5 +231,5 @@ class AsyncNode(BaseNode):
 
         client = AsyncClient(
             client_handle, srv_type, srv_name, qos_profile)
-        self._tg.create_task(self._run_entity(client, self._clients))
+        client._task = self._tg.create_task(self._run_entity(client, self._clients))
         return client

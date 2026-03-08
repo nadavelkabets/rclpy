@@ -85,7 +85,7 @@ async def test_client_calls_service():
             try:
                 await asyncio.sleep(0.5)  # DDS discovery
 
-                assert client.wait_for_service(timeout_sec=5.0)
+                await client.wait_for_service(timeout_sec=5.0)
 
                 async with asyncio.timeout(5):
                     response = await client.call(SetBool.Request(data=True))
@@ -117,7 +117,7 @@ async def test_client_calls_async_service():
             try:
                 await asyncio.sleep(0.5)  # DDS discovery
 
-                assert client.wait_for_service(timeout_sec=5.0)
+                await client.wait_for_service(timeout_sec=5.0)
 
                 async with asyncio.timeout(5):
                     response = await client.call(SetBool.Request(data=True))

@@ -336,6 +336,38 @@ class BaseNode:
             self._validate_topic_or_service_name(srv_name, is_service=True)
         return service_handle
 
+    def _create_publisher_handle(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: QoSProfile,
+        *,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+    ) -> '_rclpy.Publisher':
+        try:
+            final_topic = self.resolve_topic_name(topic)
+        except RuntimeError:
+            try:
+                self._validate_topic_or_service_name(topic)
+            except InvalidTopicNameException as ex:
+                raise ex from None
+            raise
+        if qos_overriding_options is None:
+            qos_overriding_options = QoSOverridingOptions([])
+        _declare_qos_parameters(
+            Publisher, self, final_topic, qos_profile, qos_overriding_options)
+        check_is_valid_msg_type(msg_type)
+        failed = False
+        try:
+            with self.handle:
+                publisher_handle = _rclpy.Publisher(
+                    self.handle, msg_type, topic, qos_profile.get_c_qos_profile())
+        except ValueError:
+            failed = True
+        if failed:
+            self._validate_topic_or_service_name(topic)
+        return publisher_handle
+
     def _create_client_handle(
         self,
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
@@ -1696,34 +1728,9 @@ class Node(BaseNode):
 
         callback_group = callback_group or self.default_callback_group
 
-        failed = False
-        try:
-            final_topic = self.resolve_topic_name(topic)
-        except RuntimeError:
-            # if it's name validation error, raise a more appropriate exception.
-            try:
-                self._validate_topic_or_service_name(topic)
-            except InvalidTopicNameException as ex:
-                raise ex from None
-            # else reraise the previous exception
-            raise
-
-        if qos_overriding_options is None:
-            qos_overriding_options = QoSOverridingOptions([])
-        _declare_qos_parameters(
-            Publisher, self, final_topic, qos_profile, qos_overriding_options)
-
-        # this line imports the typesupport for the message module if not already done
-        failed = False
-        check_is_valid_msg_type(msg_type)
-        try:
-            with self.handle:
-                publisher_object = _rclpy.Publisher(
-                    self.handle, msg_type, topic, qos_profile.get_c_qos_profile())
-        except ValueError:
-            failed = True
-        if failed:
-            self._validate_topic_or_service_name(topic)
+        publisher_object = self._create_publisher_handle(
+            msg_type, topic, qos_profile,
+            qos_overriding_options=qos_overriding_options)
 
         try:
             publisher = publisher_class(
