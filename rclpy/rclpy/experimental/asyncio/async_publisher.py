@@ -23,11 +23,12 @@ class AsyncPublisher(BasePublisher[MsgT]):
 
     async def _run(self) -> None:
         """Wait for close signal, then destroy the handle."""
-        try:
-            await self._close_event.wait()
-        finally:
-            self._task = None
-            self.handle.destroy_when_not_in_use()
+        with self.handle:
+            try:
+                await self._close_event.wait()
+            finally:
+                self._task = None
+                self.handle.destroy_when_not_in_use()
 
     async def close(self) -> None:
         """Signal the publisher to shut down."""

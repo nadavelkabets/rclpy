@@ -19,6 +19,21 @@ from .async_subscription import AsyncSubscription
 
 
 class AsyncNode(BaseNode):
+    """
+    Async context manager node. Must be used with `async with`::
+
+        with rclpy.init():
+            async with AsyncNode('my_node') as node:
+                node.create_subscription(topic, MsgType, callback, qos)
+                await node.close()
+
+    Unlike `Node`, `AsyncNode` does not register with
+    `context.track_node()` because its teardown is async and cannot be
+    driven from the synchronous `context._cleanup()` path that
+    `rclpy.shutdown()` uses. The `async with` block is the lifecycle
+    guarantee.
+    """
+
     def __init__(
         self,
         node_name: str,
