@@ -26,7 +26,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         self._callback = callback
         self._callback_type = self._detect_callback_type(callback)
         self._concurrent = concurrent
-        self._closing = False
+        self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
@@ -39,22 +39,26 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     def callback(self) -> AsyncGenericSubscriptionCallback[MsgT]:
         return self._callback
 
+    def destroy(self) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._task is not None:
+            self._task.cancel()
+        self.handle.clear_on_new_message_callback()
+        super().destroy()
+
     async def _messages(self):
         """Async generator yielding (msg, msg_info) from DDS."""
-        with self.handle:
-            self.handle.set_on_new_message_callback(self._on_new_message)
-            try:
-                while not self._closing:
-                    msg_and_info = self.handle.take_message(
-                        self.msg_type, self.raw)
-                    if msg_and_info is not None:
-                        yield msg_and_info
-                    else:
-                        self._read_event.clear()
-                        await self._read_event.wait()
-            finally:
-                self.handle.clear_on_new_message_callback()
-                self.handle.destroy_when_not_in_use()
+        self.handle.set_on_new_message_callback(self._on_new_message)
+        while True:
+            msg_and_info = self.handle.take_message(
+                self.msg_type, self.raw)
+            if msg_and_info is not None:
+                yield msg_and_info
+            else:
+                self._read_event.clear()
+                await self._read_event.wait()
 
     def _make_callback(self, msg_and_info: tuple) -> Awaitable[None]:
         """Create a callback coroutine from a (msg, msg_info) tuple."""
@@ -65,7 +69,6 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     async def _run(self) -> None:
         """DDS bridge read loop for subscriptions."""
         self._loop = asyncio.get_running_loop()
-
         try:
             if self._concurrent:
                 async with asyncio.TaskGroup() as tg:
@@ -76,11 +79,4 @@ class AsyncSubscription(BaseSubscription[MsgT]):
                     await self._make_callback(msg_and_info)
         finally:
             self._task = None
-
-    async def close(self) -> None:
-        """Signal the read loop to stop and wait for in-flight callbacks."""
-        if self._task is None:
-            return
-        self._closing = True
-        self._read_event.set()
-        await self._task
+            self.destroy()

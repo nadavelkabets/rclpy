@@ -154,6 +154,10 @@ class BaseSubscription(Generic[MsgT]):
         with self.handle:
             return self.__subscription.get_content_filter()
 
+    def destroy(self) -> None:
+        """Destroy the underlying subscription handle."""
+        self.handle.destroy_when_not_in_use()
+
 
 class Subscription(BaseSubscription[MsgT]):
 
@@ -252,7 +256,7 @@ class Subscription(BaseSubscription[MsgT]):
         """
         for handler in self.event_handlers:
             handler.destroy()
-        self.handle.destroy_when_not_in_use()
+        super().destroy()
 
     def __enter__(self) -> 'Subscription[MsgT]':
         return self

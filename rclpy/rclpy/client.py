@@ -92,6 +92,10 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
         with self.handle:
             return self.__client.get_logger_name()
 
+    def destroy(self) -> None:
+        """Destroy the underlying client handle."""
+        self.handle.destroy_when_not_in_use()
+
 
 class Client(BaseClient[SrvRequestT, SrvResponseT]):
     def __init__(
@@ -250,7 +254,7 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         .. warning:: Users should not destroy a service client with this destructor, instead they
            should call :meth:`.Node.destroy_client`.
         """
-        self.handle.destroy_when_not_in_use()
+        super().destroy()
 
     def __enter__(self) -> 'Client[SrvRequestT, SrvResponseT]':
         return self

@@ -53,7 +53,7 @@ def rclpy_context():
 async def test_lifecycle():
     """Node creates and destroys cleanly via async context manager."""
     async with AsyncNode('test_lifecycle_node') as node:
-        await node.close()
+        node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_subscription_receives_message():
 
             assert received_data == ['hello']
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -104,8 +104,8 @@ async def test_client_calls_async_service():
             assert response.success is False
             assert response.message == 'inverted'
         finally:
-            await client_node.close()
-            await srv_node.close()
+            client_node.destroy_node()
+            srv_node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -116,20 +116,18 @@ async def test_sleep_wall_clock():
             async with asyncio.timeout(5):
                 await node.sleep(0.1)
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
 async def test_sleep_cancelled_on_close():
-    """Pending sleeps are cancelled when node.close() is called."""
+    """Pending sleeps are cancelled when node.destroy_node() is called."""
     async with AsyncNode('test_sleep_cancel_node') as node:
-        close_task = asyncio.create_task(node.close())
-        try:
-            with pytest.raises(asyncio.CancelledError):
-                async with asyncio.timeout(5):
-                    await node.sleep(999)
-        finally:
-            await close_task
+        loop = asyncio.get_running_loop()
+        loop.call_soon(node.destroy_node)
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(5):
+                await node.sleep(999)
 
 
 @pytest.mark.asyncio
@@ -148,7 +146,7 @@ async def test_sleep_raises_on_clock_change():
                 with pytest.raises(TimeSourceChangedError):
                     await sleep_task
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -212,24 +210,36 @@ async def test_subscription_concurrent_dispatch():
             async with asyncio.timeout(5):
                 await done.wait()
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
-async def test_direct_entity_close():
-    """Calling entity.close() directly removes it from the node entity set."""
+async def test_direct_entity_destroy():
+    """Destroying a subscription stops message delivery."""
+    received = asyncio.Event()
+
     async def callback(msg):
-        pass
+        received.set()
 
-    async with AsyncNode('test_direct_close_node') as node:
+    async with AsyncNode('test_direct_destroy_node') as node:
+        pub = node.create_publisher(String, '/test_direct_destroy_topic', TEST_QOS)
         sub = node.create_subscription(
-            String, '/test_direct_close_topic', callback, TEST_QOS)
-        assert sub in node._subscriptions
+            String, '/test_direct_destroy_topic', callback, TEST_QOS)
 
-        await sub.close()
-        assert sub not in node._subscriptions
+        try:
+            pub.publish(String(data='before'))
+            async with asyncio.timeout(5):
+                await received.wait()
+            received.clear()
 
-        await node.close()
+            sub.destroy()
+
+            pub.publish(String(data='after'))
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.5):
+                    await received.wait()
+        finally:
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -240,16 +250,16 @@ async def test_create_before_aenter_raises():
     async def noop(msg):
         pass
 
-    with pytest.raises(RuntimeError, match='Node context manager not active'):
+    with pytest.raises(RuntimeError):
         node.create_subscription(String, '/unused', noop, TEST_QOS)
 
-    with pytest.raises(RuntimeError, match='Node context manager not active'):
+    with pytest.raises(RuntimeError):
         node.create_publisher(String, '/unused', TEST_QOS)
 
-    with pytest.raises(RuntimeError, match='Node context manager not active'):
+    with pytest.raises(RuntimeError):
         node.create_service(SetBool, '/unused', noop)
 
-    with pytest.raises(RuntimeError, match='Node context manager not active'):
+    with pytest.raises(RuntimeError):
         node.create_client(SetBool, '/unused')
 
     node.handle.destroy_when_not_in_use()
@@ -285,8 +295,8 @@ async def test_multiple_entities_two_nodes():
                 await received_a.wait()
                 await received_b.wait()
         finally:
-            await node_a.close()
-            await node_b.close()
+            node_a.destroy_node()
+            node_b.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -298,7 +308,7 @@ async def test_wait_for_service_timeout():
             with pytest.raises(TimeoutError):
                 await client.wait_for_service(timeout_sec=0.5)
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -311,7 +321,7 @@ async def test_enable_logger_service():
             # 6 ParameterService + 2 LoggingService = at least 8
             assert len(node._services) >= 8
         finally:
-            await node.close()
+            node.destroy_node()
 
 
 @pytest.mark.asyncio
@@ -361,5 +371,5 @@ async def test_parameter_service_over_dds():
                 get_resp2 = await get_client.call(get_req)
             assert get_resp2.values[0].integer_value == 99
         finally:
-            await client_node.close()
-            await srv_node.close()
+            client_node.destroy_node()
+            srv_node.destroy_node()

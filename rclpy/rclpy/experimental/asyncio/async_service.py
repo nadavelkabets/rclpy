@@ -24,7 +24,7 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         super().__init__(service_impl, srv_type, srv_name, qos_profile)
         self.callback = callback
         self._concurrent = concurrent
-        self._closing = False
+        self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
@@ -32,6 +32,15 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
     def _on_new_request(self, _num_waiting: int) -> None:
         assert self._loop is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
+
+    def destroy(self) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._task is not None:
+            self._task.cancel()
+        self.handle.clear_on_new_request_callback()
+        super().destroy()
 
     async def _handle_request(
         self,
@@ -43,25 +52,19 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
 
     async def _requests(self):
         """Async generator yielding (request, header) from DDS."""
-        with self.handle:
-            self.handle.set_on_new_request_callback(self._on_new_request)
-            try:
-                while not self._closing:
-                    request_and_header = self.handle.service_take_request(
-                        self.srv_type.Request)
-                    if request_and_header != (None, None):
-                        yield request_and_header
-                    else:
-                        self._read_event.clear()
-                        await self._read_event.wait()
-            finally:
-                self.handle.clear_on_new_request_callback()
-                self.handle.destroy_when_not_in_use()
+        self.handle.set_on_new_request_callback(self._on_new_request)
+        while True:
+            request_and_header = self.handle.service_take_request(
+                self.srv_type.Request)
+            if request_and_header != (None, None):
+                yield request_and_header
+            else:
+                self._read_event.clear()
+                await self._read_event.wait()
 
     async def _run(self) -> None:
         """DDS bridge read loop for services."""
         self._loop = asyncio.get_running_loop()
-
         try:
             if self._concurrent:
                 async with asyncio.TaskGroup() as tg:
@@ -72,12 +75,4 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
                     await self._handle_request(request, header)
         finally:
             self._task = None
-
-    # TODO: calling this from within a service callback will deadlock
-    async def close(self) -> None:
-        """Signal the read loop to stop and wait for in-flight callbacks."""
-        if self._task is None:
-            return
-        self._closing = True
-        self._read_event.set()
-        await self._task
+            self.destroy()

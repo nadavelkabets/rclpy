@@ -2,7 +2,7 @@ import asyncio
 from types import TracebackType
 from typing import Any, Awaitable, Callable, Optional, Set, Type, Union
 
-from rclpy.clock import ClockChange, JumpThreshold
+from rclpy.clock import ClockChange, JumpThreshold, TimeJump
 from rclpy.context import Context
 from rclpy.duration import Duration
 from rclpy.exceptions import TimeSourceChangedError
@@ -26,13 +26,7 @@ class AsyncNode(BaseNode):
         with rclpy.init():
             async with AsyncNode('my_node') as node:
                 node.create_subscription(topic, MsgType, callback, qos)
-                await node.close()
-
-    Unlike `Node`, `AsyncNode` does not register with
-    `context.track_node()` because its teardown is async and cannot be
-    driven from the synchronous `context._cleanup()` path that
-    `rclpy.shutdown()` uses. The `async with` block is the lifecycle
-    guarantee.
+                node.destroy_node()
     """
 
     def __init__(
@@ -71,9 +65,11 @@ class AsyncNode(BaseNode):
         self._services: Set[AsyncService] = set()
         self._clients: Set[AsyncClient] = set()
         self._pending_sleeps: Set[asyncio.Future] = set()
+        self._destroyed = False
+        # Register with context for rclpy.shutdown() safety net
+        self._context.track_node(self)
 
     async def __aenter__(self) -> 'AsyncNode':
-        self.handle.__enter__()
         tg = asyncio.TaskGroup()
         self._tg = await tg.__aenter__()
         self._setup()
@@ -86,41 +82,43 @@ class AsyncNode(BaseNode):
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> None:
-        tg = self._tg
-        self._tg = None
-        self._pending_sleeps = None
         try:
-            await tg.__aexit__(exc_type, exc_val, exc_tb)
+            await self._tg.__aexit__(exc_type, exc_val, exc_tb)
         finally:
-            self.handle.__exit__(exc_type, exc_val, exc_tb)
-            self.handle.destroy_when_not_in_use()
+            self._tg = None
+            self.destroy_node()
 
-    async def close(self) -> None:
+    def destroy_node(self) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        self._context.untrack_node(self)
         for future in self._pending_sleeps:
             future.cancel()
-        async with asyncio.TaskGroup() as tg:
-            for pub in self._publishers:
-                tg.create_task(pub.close())
-            for sub in self._subscriptions:
-                tg.create_task(sub.close())
-            for srv in self._services:
-                tg.create_task(srv.close())
-            for cli in self._clients:
-                tg.create_task(cli.close())
+        for pub in self._publishers:
+            pub.destroy()
+        for sub in self._subscriptions:
+            sub.destroy()
+        for srv in self._services:
+            srv.destroy()
+        for cli in self._clients:
+            cli.destroy()
+        self.handle.destroy_when_not_in_use()
 
     async def sleep(self, duration_sec: float) -> None:
         """
         Sleep for a duration respecting sim time.
 
-        Cancelled on close(). Raises TimeSourceChangedError if ROS time is
-        activated or deactivated during the sleep.
+        Cancelled on destroy_node(). Raises TimeSourceChangedError if ROS time
+        is activated or deactivated during the sleep.
         """
-        if self._pending_sleeps is None:
-            raise RuntimeError("sleep() requires the node context manager to be active")
+        if self._tg is None:
+            raise RuntimeError("Cannot sleep before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot sleep on a destroyed node")
         if duration_sec <= 0:
             return
 
-        clock = self.get_clock()
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         timer_handle = None
@@ -134,26 +132,26 @@ class AsyncNode(BaseNode):
             if not future.done():
                 future.set_exception(TimeSourceChangedError())
 
-        if clock.ros_time_is_active:
-            target = clock.now() + Duration(nanoseconds=int(duration_sec * 1e9))
+        if self._clock.ros_time_is_active:
+            target = self._clock.now() + Duration(nanoseconds=int(duration_sec * 1e9))
         else:
             timer_handle = loop.call_later(duration_sec, _resolve)
 
-        def _on_jump(time_jump: Any) -> None:
+        def _on_jump(time_jump: TimeJump) -> None:
             if time_jump.clock_change in (
                 ClockChange.ROS_TIME_ACTIVATED,
                 ClockChange.ROS_TIME_DEACTIVATED,
             ):
-                loop.call_soon_threadsafe(_reject)
-            elif target is not None and clock.now() >= target:
-                loop.call_soon_threadsafe(_resolve)
+                _reject()
+            elif target is not None and self._clock.now() >= target:
+                _resolve()
 
         threshold = JumpThreshold(
             min_forward=Duration(nanoseconds=1),
             min_backward=None,
             on_clock_change=True,
         )
-        jump_handle = clock.create_jump_callback(
+        jump_handle = self._clock.create_jump_callback(
             threshold, post_callback=_on_jump)
         self._pending_sleeps.add(future)
         try:
@@ -169,6 +167,7 @@ class AsyncNode(BaseNode):
             await entity._run()
         finally:
             entity_set.discard(entity)
+            entity.destroy()
 
     def create_publisher(
         self,
@@ -177,7 +176,9 @@ class AsyncNode(BaseNode):
         qos_profile: Union[QoSProfile, int],
     ) -> AsyncPublisher[MsgT]:
         if self._tg is None:
-            raise RuntimeError("Node context manager not active")
+            raise RuntimeError("Cannot create publisher before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot create publisher on a destroyed node")
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
 
         publisher_handle = self._create_publisher_handle(
@@ -200,7 +201,9 @@ class AsyncNode(BaseNode):
         content_filter_options: Optional[ContentFilterOptions] = None,
     ) -> AsyncSubscription[MsgT]:
         if self._tg is None:
-            raise RuntimeError("Node context manager not active")
+            raise RuntimeError("Cannot create subscription before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot create subscription on a destroyed node")
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
 
         subscription_handle = self._create_subscription_handle(
@@ -224,7 +227,9 @@ class AsyncNode(BaseNode):
         concurrent: bool = False,
     ) -> AsyncService[SrvRequestT, SrvResponseT]:
         if self._tg is None:
-            raise RuntimeError("Node context manager not active")
+            raise RuntimeError("Cannot create service before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot create service on a destroyed node")
 
         service_handle = self._create_service_handle(
             srv_type, srv_name, qos_profile=qos_profile)
@@ -244,7 +249,9 @@ class AsyncNode(BaseNode):
         qos_profile: QoSProfile = qos_profile_services_default,
     ) -> AsyncClient[SrvRequestT, SrvResponseT]:
         if self._tg is None:
-            raise RuntimeError("Node context manager not active")
+            raise RuntimeError("Cannot create client before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot create client on a destroyed node")
 
         client_handle = self._create_client_handle(
             srv_type, srv_name, qos_profile=qos_profile)

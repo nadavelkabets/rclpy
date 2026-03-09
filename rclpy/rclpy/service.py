@@ -93,6 +93,10 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
         with self.handle:
             return self.__service.get_logger_name()
 
+    def destroy(self) -> None:
+        """Destroy the underlying service handle."""
+        self.handle.destroy_when_not_in_use()
+
 
 class Service(BaseService[SrvRequestT, SrvResponseT]):
     def __init__(
@@ -145,7 +149,7 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
         .. warning:: Users should not destroy a service server with this destructor, instead they
            should call :meth:`.Node.destroy_service`.
         """
-        self.handle.destroy_when_not_in_use()
+        super().destroy()
 
     def __enter__(self) -> 'Service[SrvRequestT, SrvResponseT]':
         return self

@@ -86,6 +86,10 @@ class BasePublisher(Generic[MsgT]):
         with self.handle:
             _rclpy.rclpy_assert_liveliness(self.handle)
 
+    def destroy(self) -> None:
+        """Destroy the underlying publisher handle."""
+        self.handle.destroy_when_not_in_use()
+
 
 class Publisher(BasePublisher[MsgT]):
 
@@ -126,7 +130,7 @@ class Publisher(BasePublisher[MsgT]):
         """
         for handler in self.event_handlers:
             handler.destroy()
-        self.handle.destroy_when_not_in_use()
+        super().destroy()
 
     def wait_for_all_acked(self, timeout: Duration = Duration(seconds=-1)) -> bool:
         """
