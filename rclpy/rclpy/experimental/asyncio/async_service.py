@@ -31,17 +31,22 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         srv_name: str,
         callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
         qos_profile: QoSProfile,
+        on_destroy: Callable[['AsyncService'], None],
         concurrent: bool = False,
+        tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
         if not inspect.iscoroutinefunction(callback):
             raise TypeError('AsyncService callback must be an async function')
         super().__init__(service_impl, srv_type, srv_name, qos_profile)
         self.callback = callback
+        self._on_destroy: Optional[Callable[['AsyncService'], None]] = on_destroy
         self._concurrent = concurrent
         self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
+        if tg is not None:
+            self._task = tg.create_task(self._run())
 
     def _on_new_request(self, _num_waiting: int) -> None:
         assert self._loop is not None
@@ -51,6 +56,9 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         if self._destroyed:
             return
         self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
         if self._task is not None:
             self._task.cancel()
         self.handle.clear_on_new_request_callback()

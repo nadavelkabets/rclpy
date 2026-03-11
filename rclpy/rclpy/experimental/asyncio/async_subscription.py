@@ -14,7 +14,7 @@
 
 import asyncio
 import inspect
-from typing import Awaitable, Optional, Type
+from typing import Awaitable, Callable, Optional, Type
 
 from rclpy.qos import QoSProfile
 from rclpy.subscription import AsyncGenericSubscriptionCallback, BaseSubscription
@@ -31,19 +31,24 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         topic: str,
         callback: AsyncGenericSubscriptionCallback[MsgT],
         qos_profile: QoSProfile,
+        on_destroy: Callable[['AsyncSubscription'], None],
         raw: bool = False,
         concurrent: bool = False,
+        tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
         if not inspect.iscoroutinefunction(callback):
             raise TypeError('AsyncSubscription callback must be an async function')
         super().__init__(subscription_impl, msg_type, topic, qos_profile, raw)
         self._callback = callback
         self._callback_type = self._detect_callback_type(callback)
+        self._on_destroy: Optional[Callable[['AsyncSubscription'], None]] = on_destroy
         self._concurrent = concurrent
         self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
+        if tg is not None:
+            self._task = tg.create_task(self._run())
 
     def _on_new_message(self, _num_waiting: int) -> None:
         assert self._loop is not None
@@ -57,6 +62,9 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         if self._destroyed:
             return
         self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
         if self._task is not None:
             self._task.cancel()
         self.handle.clear_on_new_message_callback()

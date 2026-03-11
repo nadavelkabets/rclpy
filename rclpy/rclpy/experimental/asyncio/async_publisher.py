@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-from typing import Optional, Type, Union
+from typing import Callable, Optional, Type, Union
 
 from rclpy.publisher import BasePublisher
 from rclpy.qos import QoSProfile
@@ -21,7 +20,7 @@ from rclpy.type_support import MsgT
 
 
 class AsyncPublisher(BasePublisher[MsgT]):
-    """Async publisher that integrates with AsyncNode's structured concurrency."""
+    """Async publisher that integrates with AsyncNode lifecycle tracking."""
 
     def __init__(
         self,
@@ -29,10 +28,11 @@ class AsyncPublisher(BasePublisher[MsgT]):
         msg_type: Type[MsgT],
         topic: str,
         qos_profile: QoSProfile,
+        on_destroy: Callable[['AsyncPublisher'], None],
     ) -> None:
         super().__init__(publisher_impl, msg_type, topic, qos_profile)
+        self._on_destroy: Optional[Callable[['AsyncPublisher'], None]] = on_destroy
         self._destroyed = False
-        self._task: Optional[asyncio.Task] = None
 
     def publish(self, msg: Union[MsgT, bytes]) -> None:
         if self._destroyed:
@@ -43,13 +43,7 @@ class AsyncPublisher(BasePublisher[MsgT]):
         if self._destroyed:
             return
         self._destroyed = True
-        if self._task is not None:
-            self._task.cancel()
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
         super().destroy()
-
-    async def _run(self) -> None:
-        try:
-            await asyncio.Event().wait()  # wait forever, cancelled on shutdown
-        finally:
-            self._task = None
-            self.destroy()

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import asyncio
-from typing import Dict, Optional, Type
+from typing import Callable, Dict, Optional, Type
 
 from rclpy.client import BaseClient
 from rclpy.qos import QoSProfile
@@ -29,13 +29,18 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
         qos_profile: QoSProfile,
+        on_destroy: Callable[['AsyncClient'], None],
+        tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
         super().__init__(client_impl, srv_type, srv_name, qos_profile)
+        self._on_destroy: Optional[Callable[['AsyncClient'], None]] = on_destroy
         self._pending_requests: Dict[int, asyncio.Future] = {}
         self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
+        if tg is not None:
+            self._task = tg.create_task(self._run())
 
     def _on_new_response(self, _num_waiting: int) -> None:
         assert self._loop is not None
@@ -56,6 +61,9 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         if self._destroyed:
             return
         self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
         if self._task is not None:
             self._task.cancel()
         self.handle.clear_on_new_response_callback()

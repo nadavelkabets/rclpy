@@ -98,7 +98,8 @@ class AsyncNode(BaseNode):
         tg = asyncio.TaskGroup()
         self._tg = await tg.__aenter__()
         for entity in self._entities:
-            entity._task = self._tg.create_task(self._run_entity(entity))
+            if hasattr(entity, '_run'):
+                entity._task = self._tg.create_task(entity._run())
         return self
 
     async def __aexit__(
@@ -122,7 +123,7 @@ class AsyncNode(BaseNode):
             return
         self._destroyed.set()
         self._context.untrack_node(self)
-        for entity in self._entities:
+        for entity in list(self._entities):
             entity.destroy()
         self._clock._destroy()
         self.handle.destroy_when_not_in_use()
@@ -140,13 +141,6 @@ class AsyncNode(BaseNode):
         async with self:
             await self._destroyed.wait()
 
-    async def _run_entity(self, entity: Any) -> None:
-        try:
-            await entity._run()
-        finally:
-            self._entities.discard(entity)
-            entity.destroy()
-
     def create_publisher(
         self,
         msg_type: Type[MsgT],
@@ -160,10 +154,14 @@ class AsyncNode(BaseNode):
         publisher_handle = self._create_publisher_handle(
             msg_type, topic, qos_profile)
 
-        pub = AsyncPublisher(publisher_handle, msg_type, topic, qos_profile)
+        pub = AsyncPublisher(
+            publisher_handle,
+            msg_type,
+            topic,
+            qos_profile,
+            on_destroy=self._entities.discard,
+        )
         self._entities.add(pub)
-        if self._tg is not None:
-            pub._task = self._tg.create_task(self._run_entity(pub))
         return pub
 
     def create_subscription(
@@ -186,11 +184,17 @@ class AsyncNode(BaseNode):
             content_filter_options=content_filter_options)
 
         sub = AsyncSubscription(
-            subscription_handle, msg_type, topic, callback,
-            qos_profile, raw, concurrent)
+            subscription_handle,
+            msg_type,
+            topic,
+            callback,
+            qos_profile,
+            on_destroy=self._entities.discard,
+            raw=raw,
+            concurrent=concurrent,
+            tg=self._tg,
+        )
         self._entities.add(sub)
-        if self._tg is not None:
-            sub._task = self._tg.create_task(self._run_entity(sub))
         return sub
 
     def create_service(
@@ -209,11 +213,16 @@ class AsyncNode(BaseNode):
             srv_type, srv_name, qos_profile=qos_profile)
 
         srv = AsyncService(
-            service_handle, srv_type, srv_name, callback,
-            qos_profile, concurrent)
+            service_handle,
+            srv_type,
+            srv_name,
+            callback,
+            qos_profile,
+            on_destroy=self._entities.discard,
+            concurrent=concurrent,
+            tg=self._tg,
+        )
         self._entities.add(srv)
-        if self._tg is not None:
-            srv._task = self._tg.create_task(self._run_entity(srv))
         return srv
 
     def create_client(
@@ -230,10 +239,14 @@ class AsyncNode(BaseNode):
             srv_type, srv_name, qos_profile=qos_profile)
 
         client = AsyncClient(
-            client_handle, srv_type, srv_name, qos_profile)
+            client_handle,
+            srv_type,
+            srv_name,
+            qos_profile,
+            on_destroy=self._entities.discard,
+            tg=self._tg,
+        )
         self._entities.add(client)
-        if self._tg is not None:
-            client._task = self._tg.create_task(self._run_entity(client))
         return client
 
     def create_timer(
@@ -245,8 +258,13 @@ class AsyncNode(BaseNode):
             raise RuntimeError('Cannot create timer on a destroyed node')
 
         timer_period_ns = int(float(timer_period_sec) * 1e9)
-        timer = AsyncTimer(timer_period_ns, self._clock, self.context, callback)
+        timer = AsyncTimer(
+            timer_period_ns,
+            self._clock,
+            self.context,
+            callback,
+            on_destroy=self._entities.discard,
+            tg=self._tg,
+        )
         self._entities.add(timer)
-        if self._tg is not None:
-            timer._task = self._tg.create_task(self._run_entity(timer))
         return timer
