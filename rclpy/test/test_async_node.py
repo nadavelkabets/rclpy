@@ -34,11 +34,9 @@ from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
 from rclpy.timer import TimerInfo
 
-from std_msgs.msg import String
-
-from std_srvs.srv import SetBool
-
 from test_msgs.msg import BasicTypes
+from test_msgs.msg import Strings
+from test_msgs.srv import BasicTypes as BasicTypesSrv
 
 from type_description_interfaces.srv import GetTypeDescription
 
@@ -70,14 +68,14 @@ async def test_subscription_receives_message():
     received_data = []
 
     async def callback(msg):
-        received_data.append(msg.data)
+        received_data.append(msg.string_value)
         received.set()
 
     async with AsyncNode('test_sub_node') as node:
-        pub = node.create_publisher(String, '/test_sub_topic', TEST_QOS)
-        node.create_subscription(String, '/test_sub_topic', callback, TEST_QOS)
+        pub = node.create_publisher(Strings, '/test_sub_topic', TEST_QOS)
+        node.create_subscription(Strings, '/test_sub_topic', callback, TEST_QOS)
 
-        pub.publish(String(data='hello'))
+        pub.publish(Strings(string_value='hello'))
 
         async with asyncio.timeout(5):
             await received.wait()
@@ -89,23 +87,23 @@ async def test_subscription_receives_message():
 async def test_client_calls_async_service():
     """Client can call a service hosted by another AsyncNode."""
     async def handler(request, response):
-        response.success = not request.data
-        response.message = 'inverted'
+        response.bool_value = not request.bool_value
+        response.string_value = 'inverted'
         return response
 
     async with (
         AsyncNode('test_full_srv_node') as srv_node,
         AsyncNode('test_full_client_node') as client_node,
     ):
-        srv_node.create_service(SetBool, '/test_full_service', handler)
-        client = client_node.create_client(SetBool, '/test_full_service')
+        srv_node.create_service(BasicTypesSrv, '/test_full_service', handler)
+        client = client_node.create_client(BasicTypesSrv, '/test_full_service')
 
         async with asyncio.timeout(5):
             await client.wait_for_service()
-            response = await client.call(SetBool.Request(data=True))
+            response = await client.call(BasicTypesSrv.Request(bool_value=True))
 
-        assert response.success is False
-        assert response.message == 'inverted'
+        assert response.bool_value is False
+        assert response.string_value == 'inverted'
 
 
 @pytest.mark.asyncio
@@ -148,10 +146,10 @@ async def test_subscription_callback_exception_sequential():
         raise ValueError('boom')
 
     node = AsyncNode('test_seq_exc_node')
-    pub = node.create_publisher(String, '/test_seq_exc_topic', TEST_QOS)
+    pub = node.create_publisher(Strings, '/test_seq_exc_topic', TEST_QOS)
     node.create_subscription(
-        String, '/test_seq_exc_topic', bad_callback, TEST_QOS)
-    pub.publish(String(data='trigger'))
+        Strings, '/test_seq_exc_topic', bad_callback, TEST_QOS)
+    pub.publish(Strings(string_value='trigger'))
 
     with pytest.raises(ExceptionGroup) as exc_info:
         async with asyncio.timeout(5):
@@ -168,11 +166,11 @@ async def test_subscription_callback_exception_concurrent():
 
     node = AsyncNode('test_conc_exc_node')
     pub = node.create_publisher(
-        String, '/test_conc_exc_topic', TEST_QOS)
+        Strings, '/test_conc_exc_topic', TEST_QOS)
     node.create_subscription(
-        String, '/test_conc_exc_topic', bad_callback, TEST_QOS,
+        Strings, '/test_conc_exc_topic', bad_callback, TEST_QOS,
         concurrent=True)
-    pub.publish(String(data='trigger'))
+    pub.publish(Strings(string_value='trigger'))
 
     with pytest.raises(ExceptionGroup) as exc_info:
         async with asyncio.timeout(5):
@@ -194,13 +192,13 @@ async def test_subscription_concurrent_dispatch():
 
     async with AsyncNode('test_conc_dispatch_node') as node:
         pub = node.create_publisher(
-            String, '/test_conc_dispatch_topic', TEST_QOS)
+            Strings, '/test_conc_dispatch_topic', TEST_QOS)
         node.create_subscription(
-            String, '/test_conc_dispatch_topic', callback, TEST_QOS,
+            Strings, '/test_conc_dispatch_topic', callback, TEST_QOS,
             concurrent=True)
 
         for i in range(NUM_MESSAGES):
-            pub.publish(String(data=f'msg_{i}'))
+            pub.publish(Strings(string_value=f'msg_{i}'))
 
         async with asyncio.timeout(5):
             await done.wait()
@@ -215,18 +213,18 @@ async def test_direct_entity_destroy():
         received.set()
 
     async with AsyncNode('test_direct_destroy_node') as node:
-        pub = node.create_publisher(String, '/test_direct_destroy_topic', TEST_QOS)
+        pub = node.create_publisher(Strings, '/test_direct_destroy_topic', TEST_QOS)
         sub = node.create_subscription(
-            String, '/test_direct_destroy_topic', callback, TEST_QOS)
+            Strings, '/test_direct_destroy_topic', callback, TEST_QOS)
 
-        pub.publish(String(data='before'))
+        pub.publish(Strings(string_value='before'))
         async with asyncio.timeout(5):
             await received.wait()
         received.clear()
 
         sub.destroy()
 
-        pub.publish(String(data='after'))
+        pub.publish(Strings(string_value='after'))
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.5):
                 await received.wait()
@@ -241,12 +239,12 @@ async def test_create_before_aenter():
         received.set()
 
     node = AsyncNode('test_create_before_aenter_node')
-    pub = node.create_publisher(String, '/test_pre_aenter_topic', TEST_QOS)
+    pub = node.create_publisher(Strings, '/test_pre_aenter_topic', TEST_QOS)
     node.create_subscription(
-        String, '/test_pre_aenter_topic', callback, TEST_QOS)
+        Strings, '/test_pre_aenter_topic', callback, TEST_QOS)
 
     async with node:
-        pub.publish(String(data='hello'))
+        pub.publish(Strings(string_value='hello'))
         async with asyncio.timeout(5):
             await received.wait()
 
@@ -267,14 +265,14 @@ async def test_multiple_entities_two_nodes():
         AsyncNode('test_multi_node_a') as node_a,
         AsyncNode('test_multi_node_b') as node_b,
     ):
-        pub_a = node_a.create_publisher(String, '/test_multi_a', TEST_QOS)
-        node_b.create_subscription(String, '/test_multi_a', callback_a, TEST_QOS)
+        pub_a = node_a.create_publisher(Strings, '/test_multi_a', TEST_QOS)
+        node_b.create_subscription(Strings, '/test_multi_a', callback_a, TEST_QOS)
 
-        pub_b = node_b.create_publisher(String, '/test_multi_b', TEST_QOS)
-        node_a.create_subscription(String, '/test_multi_b', callback_b, TEST_QOS)
+        pub_b = node_b.create_publisher(Strings, '/test_multi_b', TEST_QOS)
+        node_a.create_subscription(Strings, '/test_multi_b', callback_b, TEST_QOS)
 
-        pub_a.publish(String(data='a'))
-        pub_b.publish(String(data='b'))
+        pub_a.publish(Strings(string_value='a'))
+        pub_b.publish(Strings(string_value='b'))
 
         async with asyncio.timeout(5):
             await received_a.wait()
@@ -285,7 +283,7 @@ async def test_multiple_entities_two_nodes():
 async def test_wait_for_service_timeout():
     """Timeout is raised when no service server exists."""
     async with AsyncNode('test_wfs_timeout_node') as node:
-        client = node.create_client(SetBool, '/nonexistent_service')
+        client = node.create_client(BasicTypesSrv, '/nonexistent_service')
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.5):
                 await client.wait_for_service()
@@ -548,11 +546,11 @@ async def test_run_with_callback_shutdown():
         received.set()
         node.destroy_node()
 
-    pub = node.create_publisher(String, '/test_run_cb_topic', TEST_QOS)
-    node.create_subscription(String, '/test_run_cb_topic', callback, TEST_QOS)
+    pub = node.create_publisher(Strings, '/test_run_cb_topic', TEST_QOS)
+    node.create_subscription(Strings, '/test_run_cb_topic', callback, TEST_QOS)
 
     loop = asyncio.get_running_loop()
-    loop.call_later(0.1, pub.publish, String(data='stop'))
+    loop.call_later(0.1, pub.publish, Strings(string_value='stop'))
     async with asyncio.timeout(5):
         await node.run()
 
@@ -586,7 +584,7 @@ async def test_type_description_service():
 
             pub_infos = srv_node.get_publishers_info_by_topic(topic)
             assert len(pub_infos)
-            type_hash = pub_infos[0].topic_type_hash
+            type_hash = str(pub_infos[0].topic_type_hash)
 
             request = GetTypeDescription.Request(
                 type_name='test_msgs/msg/BasicTypes',
@@ -635,8 +633,9 @@ async def test_count_methods():
     """Count methods work on AsyncNode."""
     async with AsyncNode('test_count_node') as node:
         topic = '/test_count_topic'
-        node.create_publisher(String, topic, TEST_QOS)
-        node.create_subscription(String, topic, lambda msg: None, TEST_QOS)
+        node.create_publisher(Strings, topic, TEST_QOS)
+        async def _noop(msg): pass
+        node.create_subscription(Strings, topic, _noop, TEST_QOS)
         assert node.count_publishers(topic) == 1
         assert node.count_subscribers(topic) == 1
 
@@ -651,8 +650,9 @@ async def test_endpoint_info_methods():
         assert len(pub_info) == 1
         assert pub_info[0].node_name == 'test_endpoint_node'
 
+        async def _noop(msg): pass
         node.create_subscription(
-            BasicTypes, '/test_endpoint_topic', lambda msg: None, TEST_QOS)
+            BasicTypes, '/test_endpoint_topic', _noop, TEST_QOS)
         sub_info = node.get_subscriptions_info_by_topic('/test_endpoint_topic')
         assert len(sub_info) == 1
         assert sub_info[0].node_name == 'test_endpoint_node'
