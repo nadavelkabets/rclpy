@@ -20,6 +20,7 @@ import pytest
 from rcl_interfaces.msg import Parameter as ParameterMsg
 from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.msg import ParameterValue
+from rcl_interfaces.srv import GetLoggerLevels
 from rcl_interfaces.srv import GetParameters
 from rcl_interfaces.srv import SetParameters
 
@@ -28,10 +29,10 @@ from rclpy.exceptions import TimeSourceChangedError
 from rclpy.experimental import AsyncNode
 from rclpy.experimental import AsyncTimer
 from rclpy.parameter import Parameter
-from rclpy.timer import TimerInfo
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
+from rclpy.timer import TimerInfo
 
 from std_msgs.msg import String
 
@@ -54,8 +55,8 @@ def rclpy_context():
 @pytest.mark.asyncio
 async def test_lifecycle():
     """Node creates and destroys cleanly via async context manager."""
-    async with AsyncNode('test_lifecycle_node') as node:
-        node.destroy_node()
+    async with AsyncNode('test_lifecycle_node'):
+        pass
 
 
 @pytest.mark.asyncio
@@ -72,15 +73,12 @@ async def test_subscription_receives_message():
         pub = node.create_publisher(String, '/test_sub_topic', TEST_QOS)
         node.create_subscription(String, '/test_sub_topic', callback, TEST_QOS)
 
-        try:
-            pub.publish(String(data='hello'))
+        pub.publish(String(data='hello'))
 
-            async with asyncio.timeout(5):
-                await received.wait()
+        async with asyncio.timeout(5):
+            await received.wait()
 
-            assert received_data == ['hello']
-        finally:
-            node.destroy_node()
+        assert received_data == ['hello']
 
 
 @pytest.mark.asyncio
@@ -98,27 +96,20 @@ async def test_client_calls_async_service():
         srv_node.create_service(SetBool, '/test_full_service', handler)
         client = client_node.create_client(SetBool, '/test_full_service')
 
-        try:
-            async with asyncio.timeout(5):
-                await client.wait_for_service()
-                response = await client.call(SetBool.Request(data=True))
+        async with asyncio.timeout(5):
+            await client.wait_for_service()
+            response = await client.call(SetBool.Request(data=True))
 
-            assert response.success is False
-            assert response.message == 'inverted'
-        finally:
-            client_node.destroy_node()
-            srv_node.destroy_node()
+        assert response.success is False
+        assert response.message == 'inverted'
 
 
 @pytest.mark.asyncio
 async def test_sleep_wall_clock():
     """Sleep completes after the requested duration (wall clock)."""
     async with AsyncNode('test_sleep_node') as node:
-        try:
-            async with asyncio.timeout(5):
-                await node.get_clock().sleep(0.1)
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            await node.get_clock().sleep(0.1)
 
 
 @pytest.mark.asyncio
@@ -136,17 +127,14 @@ async def test_sleep_cancelled_on_close():
 async def test_sleep_raises_on_clock_change():
     """Wall clock sleep raises TimeSourceChangedError when sim time activates."""
     async with AsyncNode('test_sleep_clock_change_node') as node:
-        try:
-            # Activate sim time — triggers ROS_TIME_ACTIVATED jump callback
-            loop = asyncio.get_running_loop()
-            loop.call_soon(node.set_parameters, [Parameter(
-                'use_sim_time', Parameter.Type.BOOL, True)])
+        # Activate sim time — triggers ROS_TIME_ACTIVATED jump callback
+        loop = asyncio.get_running_loop()
+        loop.call_soon(node.set_parameters, [Parameter(
+            'use_sim_time', Parameter.Type.BOOL, True)])
 
-            async with asyncio.timeout(5):
-                with pytest.raises(TimeSourceChangedError):
-                    await node.get_clock().sleep(999)
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            with pytest.raises(TimeSourceChangedError):
+                await node.get_clock().sleep(999)
 
 
 @pytest.mark.asyncio
@@ -155,13 +143,15 @@ async def test_subscription_callback_exception_sequential():
     async def bad_callback(msg):
         raise ValueError('boom')
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        async with asyncio.timeout(5), AsyncNode('test_seq_exc_node') as node:
-            pub = node.create_publisher(String, '/test_seq_exc_topic', TEST_QOS)
-            node.create_subscription(
-                String, '/test_seq_exc_topic', bad_callback, TEST_QOS)
+    node = AsyncNode('test_seq_exc_node')
+    pub = node.create_publisher(String, '/test_seq_exc_topic', TEST_QOS)
+    node.create_subscription(
+        String, '/test_seq_exc_topic', bad_callback, TEST_QOS)
+    pub.publish(String(data='trigger'))
 
-            pub.publish(String(data='trigger'))
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with asyncio.timeout(5):
+            await node.run()
 
     assert exc_info.value.subgroup(ValueError)
 
@@ -172,15 +162,17 @@ async def test_subscription_callback_exception_concurrent():
     async def bad_callback(msg):
         raise ValueError('concurrent boom')
 
-    with pytest.raises(ExceptionGroup) as exc_info:
-        async with asyncio.timeout(5), AsyncNode('test_conc_exc_node') as node:
-            pub = node.create_publisher(
-                String, '/test_conc_exc_topic', TEST_QOS)
-            node.create_subscription(
-                String, '/test_conc_exc_topic', bad_callback, TEST_QOS,
-                concurrent=True)
+    node = AsyncNode('test_conc_exc_node')
+    pub = node.create_publisher(
+        String, '/test_conc_exc_topic', TEST_QOS)
+    node.create_subscription(
+        String, '/test_conc_exc_topic', bad_callback, TEST_QOS,
+        concurrent=True)
+    pub.publish(String(data='trigger'))
 
-            pub.publish(String(data='trigger'))
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with asyncio.timeout(5):
+            await node.run()
 
     assert exc_info.value.subgroup(ValueError)
 
@@ -203,14 +195,11 @@ async def test_subscription_concurrent_dispatch():
             String, '/test_conc_dispatch_topic', callback, TEST_QOS,
             concurrent=True)
 
-        try:
-            for i in range(NUM_MESSAGES):
-                pub.publish(String(data=f'msg_{i}'))
+        for i in range(NUM_MESSAGES):
+            pub.publish(String(data=f'msg_{i}'))
 
-            async with asyncio.timeout(5):
-                await done.wait()
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            await done.wait()
 
 
 @pytest.mark.asyncio
@@ -226,43 +215,36 @@ async def test_direct_entity_destroy():
         sub = node.create_subscription(
             String, '/test_direct_destroy_topic', callback, TEST_QOS)
 
-        try:
-            pub.publish(String(data='before'))
-            async with asyncio.timeout(5):
+        pub.publish(String(data='before'))
+        async with asyncio.timeout(5):
+            await received.wait()
+        received.clear()
+
+        sub.destroy()
+
+        pub.publish(String(data='after'))
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.5):
                 await received.wait()
-            received.clear()
-
-            sub.destroy()
-
-            pub.publish(String(data='after'))
-            with pytest.raises(TimeoutError):
-                async with asyncio.timeout(0.5):
-                    await received.wait()
-        finally:
-            node.destroy_node()
 
 
 @pytest.mark.asyncio
-async def test_create_before_aenter_raises():
-    """Creating entities before entering async context raises RuntimeError."""
-    node = AsyncNode('test_no_ctx_node')
+async def test_create_before_aenter():
+    """Entities created before entering async context dispatch after entry."""
+    received = asyncio.Event()
 
-    async def noop(msg):
-        pass
+    async def callback(msg):
+        received.set()
 
-    with pytest.raises(RuntimeError):
-        node.create_subscription(String, '/unused', noop, TEST_QOS)
+    node = AsyncNode('test_create_before_aenter_node')
+    pub = node.create_publisher(String, '/test_pre_aenter_topic', TEST_QOS)
+    node.create_subscription(
+        String, '/test_pre_aenter_topic', callback, TEST_QOS)
 
-    with pytest.raises(RuntimeError):
-        node.create_publisher(String, '/unused', TEST_QOS)
-
-    with pytest.raises(RuntimeError):
-        node.create_service(SetBool, '/unused', noop)
-
-    with pytest.raises(RuntimeError):
-        node.create_client(SetBool, '/unused')
-
-    node.handle.destroy_when_not_in_use()
+    async with node:
+        pub.publish(String(data='hello'))
+        async with asyncio.timeout(5):
+            await received.wait()
 
 
 @pytest.mark.asyncio
@@ -287,16 +269,12 @@ async def test_multiple_entities_two_nodes():
         pub_b = node_b.create_publisher(String, '/test_multi_b', TEST_QOS)
         node_a.create_subscription(String, '/test_multi_b', callback_b, TEST_QOS)
 
-        try:
-            pub_a.publish(String(data='a'))
-            pub_b.publish(String(data='b'))
+        pub_a.publish(String(data='a'))
+        pub_b.publish(String(data='b'))
 
-            async with asyncio.timeout(5):
-                await received_a.wait()
-                await received_b.wait()
-        finally:
-            node_a.destroy_node()
-            node_b.destroy_node()
+        async with asyncio.timeout(5):
+            await received_a.wait()
+            await received_b.wait()
 
 
 @pytest.mark.asyncio
@@ -304,24 +282,32 @@ async def test_wait_for_service_timeout():
     """Timeout is raised when no service server exists."""
     async with AsyncNode('test_wfs_timeout_node') as node:
         client = node.create_client(SetBool, '/nonexistent_service')
-        try:
-            with pytest.raises(TimeoutError):
-                await client.wait_for_service(timeout_sec=0.5)
-        finally:
-            node.destroy_node()
+        with pytest.raises(TimeoutError):
+            await client.wait_for_service(timeout_sec=0.5)
 
 
 @pytest.mark.asyncio
 async def test_enable_logger_service():
-    """Logger service creation path works with enable_logger_service=True."""
-    async with AsyncNode(
-        'test_logger_svc_node', enable_logger_service=True
-    ) as node:
-        try:
-            # 6 ParameterService + 2 LoggingService = at least 8
-            assert len(node._services) >= 8
-        finally:
-            node.destroy_node()
+    """Logger service is reachable over DDS when enabled."""
+    async with (
+        AsyncNode(
+            'test_logger_svc_node', enable_logger_service=True
+        ) as srv_node,
+        AsyncNode('test_logger_client_node') as client_node,
+    ):
+        client = client_node.create_client(
+            GetLoggerLevels,
+            '/test_logger_svc_node/get_logger_levels')
+
+        async with asyncio.timeout(5):
+            await client.wait_for_service()
+
+        logger_name = srv_node.get_logger().name
+        req = GetLoggerLevels.Request(names=[logger_name])
+        async with asyncio.timeout(5):
+            resp = await client.call(req)
+        assert len(resp.levels) == 1
+        assert resp.levels[0].name == logger_name
 
 
 @pytest.mark.asyncio
@@ -341,38 +327,34 @@ async def test_parameter_service_over_dds():
         set_client = client_node.create_client(
             SetParameters, '/test_param_srv_node/set_parameters')
 
-        try:
-            async with asyncio.timeout(5):
-                await get_client.wait_for_service()
-                await set_client.wait_for_service()
+        async with asyncio.timeout(5):
+            await get_client.wait_for_service()
+            await set_client.wait_for_service()
 
-            get_req = GetParameters.Request(names=['my_param'])
-            async with asyncio.timeout(5):
-                get_resp = await get_client.call(get_req)
-            assert len(get_resp.values) == 1
-            assert get_resp.values[0].integer_value == 42
-            assert get_resp.values[0].type == ParameterType.PARAMETER_INTEGER
+        get_req = GetParameters.Request(names=['my_param'])
+        async with asyncio.timeout(5):
+            get_resp = await get_client.call(get_req)
+        assert len(get_resp.values) == 1
+        assert get_resp.values[0].integer_value == 42
+        assert get_resp.values[0].type == ParameterType.PARAMETER_INTEGER
 
-            set_req = SetParameters.Request(parameters=[
-                ParameterMsg(
-                    name='my_param',
-                    value=ParameterValue(
-                        type=ParameterType.PARAMETER_INTEGER,
-                        integer_value=99,
-                    ),
+        set_req = SetParameters.Request(parameters=[
+            ParameterMsg(
+                name='my_param',
+                value=ParameterValue(
+                    type=ParameterType.PARAMETER_INTEGER,
+                    integer_value=99,
                 ),
-            ])
-            async with asyncio.timeout(5):
-                set_resp = await set_client.call(set_req)
-            assert len(set_resp.results) == 1
-            assert set_resp.results[0].successful is True
+            ),
+        ])
+        async with asyncio.timeout(5):
+            set_resp = await set_client.call(set_req)
+        assert len(set_resp.results) == 1
+        assert set_resp.results[0].successful is True
 
-            async with asyncio.timeout(5):
-                get_resp2 = await get_client.call(get_req)
-            assert get_resp2.values[0].integer_value == 99
-        finally:
-            client_node.destroy_node()
-            srv_node.destroy_node()
+        async with asyncio.timeout(5):
+            get_resp2 = await get_client.call(get_req)
+        assert get_resp2.values[0].integer_value == 99
 
 
 @pytest.mark.asyncio
@@ -388,12 +370,9 @@ async def test_timer_fires():
 
     async with AsyncNode('test_timer_fires_node') as node:
         node.create_timer(0.05, callback)
-        try:
-            async with asyncio.timeout(5):
-                await fired.wait()
-            assert count >= 1
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            await fired.wait()
+        assert count >= 1
 
 
 @pytest.mark.asyncio
@@ -410,12 +389,9 @@ async def test_timer_fires_multiple():
 
     async with AsyncNode('test_timer_multi_node') as node:
         node.create_timer(0.05, callback)
-        try:
-            async with asyncio.timeout(5):
-                await enough.wait()
-            assert count >= 3
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            await enough.wait()
+        assert count >= 3
 
 
 @pytest.mark.asyncio
@@ -431,26 +407,24 @@ async def test_timer_cancel_and_reset():
 
     async with AsyncNode('test_timer_cancel_reset_node') as node:
         timer = node.create_timer(0.05, callback)
-        try:
-            # Wait for first fire
-            async with asyncio.timeout(5):
-                await fired.wait()
-            assert count >= 1
 
-            # Cancel and verify no more fires
-            timer.cancel()
-            count_at_cancel = count
-            await asyncio.sleep(0.15)
-            assert count == count_at_cancel
+        # Wait for first fire
+        async with asyncio.timeout(5):
+            await fired.wait()
+        assert count >= 1
 
-            # Reset and verify it fires again
-            fired.clear()
-            timer.reset()
-            async with asyncio.timeout(5):
-                await fired.wait()
-            assert count > count_at_cancel
-        finally:
-            node.destroy_node()
+        # Cancel and verify no more fires
+        timer.cancel()
+        count_at_cancel = count
+        await asyncio.sleep(0.15)
+        assert count == count_at_cancel
+
+        # Reset and verify it fires again
+        fired.clear()
+        timer.reset()
+        async with asyncio.timeout(5):
+            await fired.wait()
+        assert count > count_at_cancel
 
 
 @pytest.mark.asyncio
@@ -466,16 +440,13 @@ async def test_timer_destroy():
 
     async with AsyncNode('test_timer_destroy_node') as node:
         timer = node.create_timer(0.05, callback)
-        try:
-            async with asyncio.timeout(5):
-                await fired.wait()
+        async with asyncio.timeout(5):
+            await fired.wait()
 
-            timer.destroy()
-            count_at_destroy = count
-            await asyncio.sleep(0.15)
-            assert count == count_at_destroy
-        finally:
-            node.destroy_node()
+        timer.destroy()
+        count_at_destroy = count
+        await asyncio.sleep(0.15)
+        assert count == count_at_destroy
 
 
 @pytest.mark.asyncio
@@ -484,25 +455,30 @@ async def test_timer_callback_exception():
     async def bad_callback():
         raise ValueError('timer boom')
 
+    node = AsyncNode('test_timer_exc_node')
+    node.create_timer(0.05, bad_callback)
+
     with pytest.raises(ExceptionGroup) as exc_info:
-        async with asyncio.timeout(5), AsyncNode('test_timer_exc_node') as node:
-            node.create_timer(0.05, bad_callback)
+        async with asyncio.timeout(5):
+            await node.run()
 
     assert exc_info.value.subgroup(ValueError)
 
 
 @pytest.mark.asyncio
-async def test_timer_create_before_aenter_raises():
-    """Creating a timer before entering async context raises RuntimeError."""
-    node = AsyncNode('test_timer_no_ctx_node')
+async def test_timer_create_before_aenter():
+    """Timer created before entering async context fires after entry."""
+    fired = asyncio.Event()
 
-    async def noop():
-        pass
+    async def callback():
+        fired.set()
 
-    with pytest.raises(RuntimeError):
-        node.create_timer(0.1, noop)
+    node = AsyncNode('test_timer_pre_aenter_node')
+    node.create_timer(0.05, callback)
 
-    node.handle.destroy_when_not_in_use()
+    async with node:
+        async with asyncio.timeout(5):
+            await fired.wait()
 
 
 @pytest.mark.asyncio
@@ -515,18 +491,15 @@ async def test_timer_introspection():
 
     async with AsyncNode('test_timer_introspect_node') as node:
         timer = node.create_timer(0.1, callback)
-        try:
-            assert isinstance(timer, AsyncTimer)
-            assert timer.timer_period_ns == 0.1 * 1e9
-            assert not timer.is_canceled()
+        assert isinstance(timer, AsyncTimer)
+        assert timer.timer_period_ns == 0.1 * 1e9
+        assert not timer.is_canceled()
 
-            timer.cancel()
-            assert timer.is_canceled()
+        timer.cancel()
+        assert timer.is_canceled()
 
-            timer.reset()
-            assert not timer.is_canceled()
-        finally:
-            node.destroy_node()
+        timer.reset()
+        assert not timer.is_canceled()
 
 
 @pytest.mark.asyncio
@@ -541,12 +514,50 @@ async def test_timer_callback_with_info():
 
     async with AsyncNode('test_timer_info_node') as node:
         node.create_timer(0.05, callback)
-        try:
-            async with asyncio.timeout(5):
-                await fired.wait()
-            assert len(received_info) >= 1
-            assert isinstance(received_info[0], TimerInfo)
-            assert received_info[0].expected_call_time is not None
-            assert received_info[0].actual_call_time is not None
-        finally:
-            node.destroy_node()
+        async with asyncio.timeout(5):
+            await fired.wait()
+        assert len(received_info) >= 1
+        assert isinstance(received_info[0], TimerInfo)
+        assert received_info[0].expected_call_time is not None
+        assert received_info[0].actual_call_time is not None
+
+
+@pytest.mark.asyncio
+async def test_run_basic():
+    """run() blocks until destroy_node() is called."""
+    node = AsyncNode('test_run_node')
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.1, node.destroy_node)
+    async with asyncio.timeout(5):
+        await node.run()
+
+
+@pytest.mark.asyncio
+async def test_run_with_callback_shutdown():
+    """run() returns when a callback calls destroy_node()."""
+    received = asyncio.Event()
+
+    node = AsyncNode('test_run_cb_shutdown_node')
+
+    async def callback(msg):
+        received.set()
+        node.destroy_node()
+
+    pub = node.create_publisher(String, '/test_run_cb_topic', TEST_QOS)
+    node.create_subscription(String, '/test_run_cb_topic', callback, TEST_QOS)
+
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.1, pub.publish, String(data='stop'))
+    async with asyncio.timeout(5):
+        await node.run()
+
+    assert received.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_raises_if_already_running():
+    """run() raises if node is already under async with."""
+    async with AsyncNode('test_run_conflict_node') as node:
+        with pytest.raises(RuntimeError):
+            await node.run()
+

@@ -1,4 +1,4 @@
-# Copyright 2025 Open Source Robotics Foundation, Inc.
+# Copyright 2026 Open Source Robotics Foundation, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -136,25 +136,26 @@ class AsyncTimer(BaseTimer):
             min_backward=None,
             on_clock_change=True,
         )
-        self._jump_handle = self._clock.create_jump_callback(threshold, post_callback=self._on_jump)
+        self._jump_handle = self._clock.create_jump_callback(
+            threshold, post_callback=self._on_jump)
         self.handle.set_on_reset_callback(self._on_reset)
         try:
             while True:
                 try:
                     await self._wait()
                 except (TimeSourceChangedError):
-                    continue                    
+                    continue
 
                 if self._reset_event.is_set():
                     self._reset_event.clear()
                     continue
                 if self.is_canceled():
-                    self._reset_event.clear()
                     await self._reset_event.wait()
+                    self._reset_event.clear()
                     continue
-                
+
                 await self._call()
-                
+
         finally:
             self._task = None
             self.destroy()

@@ -1,3 +1,17 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import asyncio
 from types import TracebackType
 from typing import Any, Awaitable, Callable, Optional, Set, Type, Union
@@ -6,7 +20,9 @@ from rclpy.clock_type import ClockType
 from rclpy.context import Context
 from rclpy.node import BaseNode
 from rclpy.parameter import Parameter
-from rclpy.qos import QoSProfile, qos_profile_rosout_default, qos_profile_services_default
+from rclpy.qos import qos_profile_rosout_default
+from rclpy.qos import qos_profile_services_default
+from rclpy.qos import QoSProfile
 from rclpy.subscription import AsyncGenericSubscriptionCallback
 from rclpy.subscription_content_filter_options import ContentFilterOptions
 from rclpy.timer import AsyncTimerCallbackType
@@ -19,15 +35,25 @@ from .async_service import AsyncService
 from .async_subscription import AsyncSubscription
 from .async_timer import AsyncTimer
 
+AsyncEntity = Union[
+    AsyncPublisher, AsyncSubscription, AsyncService, AsyncClient, AsyncTimer]
+
 
 class AsyncNode(BaseNode):
     """
-    Async context manager node. Must be used with `async with`::
+    Async node with two mutually exclusive entry points.
 
-        with rclpy.init():
-            async with AsyncNode('my_node') as node:
-                node.create_subscription(topic, MsgType, callback, qos)
-                node.destroy_node()
+    Simple reactive node::
+
+        node = AsyncNode('my_node')
+        node.create_subscription(topic, MsgType, callback, qos)
+        await node.run()
+
+    Composable with user-controlled lifetime::
+
+        async with AsyncNode('my_node') as node:
+            node.create_subscription(topic, MsgType, callback, qos)
+            await my_foreground_task()
     """
 
     def __init__(
@@ -46,6 +72,12 @@ class AsyncNode(BaseNode):
         automatically_declare_parameters_from_overrides: bool = False,
         enable_logger_service: bool = False
     ) -> None:
+        self._clock = AsyncClock(clock_type=ClockType.ROS_TIME)
+        self._tg: Optional[asyncio.TaskGroup] = None
+        self._entities: Set[AsyncEntity] = set()
+        self._destroyed = asyncio.Event()
+
+        # TODO: Add TypeDescriptionService support for AsyncNode
         super().__init__(
             node_name=node_name,
             context=context,
@@ -57,25 +89,16 @@ class AsyncNode(BaseNode):
             start_parameter_services=start_parameter_services,
             parameter_overrides=parameter_overrides,
             allow_undeclared_parameters=allow_undeclared_parameters,
-            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
+            automatically_declare_parameters_from_overrides=(
+                automatically_declare_parameters_from_overrides),
             enable_logger_service=enable_logger_service,
         )
-        self._clock = AsyncClock(clock_type=ClockType.ROS_TIME)
-        self._tg: Optional[asyncio.TaskGroup] = None
-        self._publishers: Set[AsyncPublisher] = set()
-        self._subscriptions: Set[AsyncSubscription] = set()
-        self._services: Set[AsyncService] = set()
-        self._clients: Set[AsyncClient] = set()
-        self._timers: Set[AsyncTimer] = set()
-        self._destroyed = False
-        # Register with context for rclpy.shutdown() safety net
-        self._context.track_node(self)
 
     async def __aenter__(self) -> 'AsyncNode':
         tg = asyncio.TaskGroup()
         self._tg = await tg.__aenter__()
-        self._setup()
-        # TODO: Add TypeDescriptionService support for AsyncNode
+        for entity in self._entities:
+            entity._task = self._tg.create_task(self._run_entity(entity))
         return self
 
     async def __aexit__(
@@ -84,39 +107,44 @@ class AsyncNode(BaseNode):
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> None:
+        self.destroy_node()
         try:
             await self._tg.__aexit__(exc_type, exc_val, exc_tb)
         finally:
             self._tg = None
-            self.destroy_node()
 
     def get_clock(self) -> AsyncClock:
         """Get the async clock used by the node."""
         return self._clock
 
     def destroy_node(self) -> None:
-        if self._destroyed:
+        if self._destroyed.is_set():
             return
-        self._destroyed = True
+        self._destroyed.set()
         self._context.untrack_node(self)
-        for pub in self._publishers:
-            pub.destroy()
-        for sub in self._subscriptions:
-            sub.destroy()
-        for srv in self._services:
-            srv.destroy()
-        for cli in self._clients:
-            cli.destroy()
-        for tmr in self._timers:
-            tmr.destroy()
+        for entity in self._entities:
+            entity.destroy()
         self._clock._destroy()
         self.handle.destroy_when_not_in_use()
 
-    async def _run_entity(self, entity: Any, entity_set: set) -> None:
+    async def run(self) -> None:
+        """
+        Run the node until destroy_node() is called.
+
+        Mutually exclusive with ``async with``. Raises RuntimeError if the
+        node is already running under a context manager.
+        """
+        if self._tg is not None:
+            raise RuntimeError(
+                "node is already running under 'async with'")
+        async with self:
+            await self._destroyed.wait()
+
+    async def _run_entity(self, entity: Any) -> None:
         try:
             await entity._run()
         finally:
-            entity_set.discard(entity)
+            self._entities.discard(entity)
             entity.destroy()
 
     def create_publisher(
@@ -125,18 +153,17 @@ class AsyncNode(BaseNode):
         topic: str,
         qos_profile: Union[QoSProfile, int],
     ) -> AsyncPublisher[MsgT]:
-        if self._tg is None:
-            raise RuntimeError("Cannot create publisher before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot create publisher on a destroyed node")
+        if self._destroyed.is_set():
+            raise RuntimeError('Cannot create publisher on a destroyed node')
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
 
         publisher_handle = self._create_publisher_handle(
             msg_type, topic, qos_profile)
 
         pub = AsyncPublisher(publisher_handle, msg_type, topic, qos_profile)
-        self._publishers.add(pub)
-        pub._task = self._tg.create_task(self._run_entity(pub, self._publishers))
+        self._entities.add(pub)
+        if self._tg is not None:
+            pub._task = self._tg.create_task(self._run_entity(pub))
         return pub
 
     def create_subscription(
@@ -150,10 +177,8 @@ class AsyncNode(BaseNode):
         concurrent: bool = False,
         content_filter_options: Optional[ContentFilterOptions] = None,
     ) -> AsyncSubscription[MsgT]:
-        if self._tg is None:
-            raise RuntimeError("Cannot create subscription before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot create subscription on a destroyed node")
+        if self._destroyed.is_set():
+            raise RuntimeError('Cannot create subscription on a destroyed node')
         qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
 
         subscription_handle = self._create_subscription_handle(
@@ -163,8 +188,9 @@ class AsyncNode(BaseNode):
         sub = AsyncSubscription(
             subscription_handle, msg_type, topic, callback,
             qos_profile, raw, concurrent)
-        self._subscriptions.add(sub)
-        sub._task = self._tg.create_task(self._run_entity(sub, self._subscriptions))
+        self._entities.add(sub)
+        if self._tg is not None:
+            sub._task = self._tg.create_task(self._run_entity(sub))
         return sub
 
     def create_service(
@@ -176,10 +202,8 @@ class AsyncNode(BaseNode):
         qos_profile: QoSProfile = qos_profile_services_default,
         concurrent: bool = False,
     ) -> AsyncService[SrvRequestT, SrvResponseT]:
-        if self._tg is None:
-            raise RuntimeError("Cannot create service before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot create service on a destroyed node")
+        if self._destroyed.is_set():
+            raise RuntimeError('Cannot create service on a destroyed node')
 
         service_handle = self._create_service_handle(
             srv_type, srv_name, qos_profile=qos_profile)
@@ -187,8 +211,9 @@ class AsyncNode(BaseNode):
         srv = AsyncService(
             service_handle, srv_type, srv_name, callback,
             qos_profile, concurrent)
-        self._services.add(srv)
-        srv._task = self._tg.create_task(self._run_entity(srv, self._services))
+        self._entities.add(srv)
+        if self._tg is not None:
+            srv._task = self._tg.create_task(self._run_entity(srv))
         return srv
 
     def create_client(
@@ -198,18 +223,17 @@ class AsyncNode(BaseNode):
         *,
         qos_profile: QoSProfile = qos_profile_services_default,
     ) -> AsyncClient[SrvRequestT, SrvResponseT]:
-        if self._tg is None:
-            raise RuntimeError("Cannot create client before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot create client on a destroyed node")
+        if self._destroyed.is_set():
+            raise RuntimeError('Cannot create client on a destroyed node')
 
         client_handle = self._create_client_handle(
             srv_type, srv_name, qos_profile=qos_profile)
 
         client = AsyncClient(
             client_handle, srv_type, srv_name, qos_profile)
-        self._clients.add(client)
-        client._task = self._tg.create_task(self._run_entity(client, self._clients))
+        self._entities.add(client)
+        if self._tg is not None:
+            client._task = self._tg.create_task(self._run_entity(client))
         return client
 
     def create_timer(
@@ -217,13 +241,12 @@ class AsyncNode(BaseNode):
         timer_period_sec: float,
         callback: AsyncTimerCallbackType,
     ) -> AsyncTimer:
-        if self._tg is None:
-            raise RuntimeError("Cannot create timer before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot create timer on a destroyed node")
+        if self._destroyed.is_set():
+            raise RuntimeError('Cannot create timer on a destroyed node')
 
         timer_period_ns = int(float(timer_period_sec) * 1e9)
         timer = AsyncTimer(timer_period_ns, self._clock, self.context, callback)
-        self._timers.add(timer)
-        timer._task = self._tg.create_task(self._run_entity(timer, self._timers))
+        self._entities.add(timer)
+        if self._tg is not None:
+            timer._task = self._tg.create_task(self._run_entity(timer))
         return timer

@@ -1,3 +1,17 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import asyncio
 from typing import Dict, Optional, Type
 
@@ -65,7 +79,7 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     async def _responses(self):
         """Async generator yielding (header, response) from DDS."""
         self.handle.set_on_new_response_callback(self._on_new_response)
-        while True:
+        while not self._destroyed:
             header_and_response = self.handle.take_response(
                 self.srv_type.Response)
             if header_and_response != (None, None):

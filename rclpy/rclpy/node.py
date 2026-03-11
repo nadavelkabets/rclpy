@@ -155,9 +155,6 @@ class BaseNode(ABC):
         enable_logger_service: bool = False
     ) -> None:
         self._context = get_default_context() if context is None else context
-        self._start_parameter_services = start_parameter_services
-        self._automatically_declare_parameters_from_overrides = automatically_declare_parameters_from_overrides
-        self._enable_logger_service = enable_logger_service
 
         self._parameters: Dict[str, Parameter[Any]] = {}
         self._pre_set_parameters_callbacks: List[Callable[[List[Parameter[Any]]],
@@ -207,6 +204,32 @@ class BaseNode(ABC):
         # Combine parameters from params files with those from the node constructor
         if parameter_overrides is not None:
             self._parameter_overrides.update({p.name: p for p in parameter_overrides})
+
+        self._parameter_event_publisher: BasePublisher[ParameterEvent] = \
+            self.create_publisher(ParameterEvent, '/parameter_events',
+                                  qos_profile_parameter_events)
+
+        if automatically_declare_parameters_from_overrides:
+            self.declare_parameters(
+                '',
+                [
+                    (name, param.value, ParameterDescriptor())
+                    for name, param in self._parameter_overrides.items()],
+                ignore_override=True,
+            )
+
+        # Parameter overrides and parameter event publisher need to be ready at this point
+        # to be able to declare 'use_sim_time' if it was not declared yet.
+        self._time_source = TimeSource(self)
+        self._time_source.attach_clock(self.get_clock())
+
+        if start_parameter_services:
+            self._parameter_service = ParameterService(self)
+
+        if enable_logger_service:
+            self._logger_service = LoggingService(self)
+
+        self._context.track_node(self)
 
     def _validate_qos_or_depth_parameter(self, qos_or_depth: Union[QoSProfile, int]) -> QoSProfile:
         if isinstance(qos_or_depth, QoSProfile):
@@ -1545,31 +1568,6 @@ class BaseNode(ABC):
         """Get the clock used by the node."""
         ...
 
-    def _setup(self) -> None:
-        self._parameter_event_publisher: BasePublisher[ParameterEvent] = \
-            self.create_publisher(ParameterEvent, '/parameter_events',
-                                  qos_profile_parameter_events)
-
-        if self._automatically_declare_parameters_from_overrides:
-            self.declare_parameters(
-                '',
-                [
-                    (name, param.value, ParameterDescriptor())
-                    for name, param in self._parameter_overrides.items()],
-                ignore_override=True,
-            )
-
-        # Parameter overrides and parameter event publisher need to be ready at this point
-        # to be able to declare 'use_sim_time' if it was not declared yet.
-        self._time_source = TimeSource(self)
-        self._time_source.attach_clock(self.get_clock())
-
-        if self._start_parameter_services:
-            self._parameter_service = ParameterService(self)
-
-        if self._enable_logger_service:
-            self._logger_service = LoggingService(self)
-
 
 class Node(BaseNode):
     """
@@ -1625,6 +1623,18 @@ class Node(BaseNode):
             to get and set logger levels of this node. Otherwise, logger levels are only managed
             locally. That is, logger levels cannot be changed remotely.
         """
+        self._publishers: List[Publisher[Any]] = []
+        self._subscriptions: List[Subscription[Any]] = []
+        self._clients: List[Client[Any, Any]] = []
+        self._services: List[Service[Any, Any]] = []
+        self._timers: List[Timer] = []
+        self._guards: List[GuardCondition] = []
+        self.__waitables: List[Waitable[Any]] = []
+        self._default_callback_group = MutuallyExclusiveCallbackGroup()
+        self._rate_group = ReentrantCallbackGroup()
+        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
+        self._clock = Clock(clock_type=ClockType.ROS_TIME)
+
         super().__init__(
             node_name=node_name,
             context=context,
@@ -1636,26 +1646,12 @@ class Node(BaseNode):
             start_parameter_services=start_parameter_services,
             parameter_overrides=parameter_overrides,
             allow_undeclared_parameters=allow_undeclared_parameters,
-            automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
+            automatically_declare_parameters_from_overrides=(
+                automatically_declare_parameters_from_overrides),
             enable_logger_service=enable_logger_service,
         )
-        self._publishers: List[Publisher[Any]] = []
-        self._subscriptions: List[Subscription[Any]] = []
-        self._clients: List[Client[Any, Any]] = []
-        self._services: List[Service[Any, Any]] = []
-        self._timers: List[Timer] = []
-        self._guards: List[GuardCondition] = []
-        self.__waitables: List[Waitable[Any]] = []
-        self._default_callback_group = MutuallyExclusiveCallbackGroup()
-        self._rate_group = ReentrantCallbackGroup()
-        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
-
-        self._clock = Clock(clock_type=ClockType.ROS_TIME)
-        self._setup()
 
         self._type_description_service = TypeDescriptionService(self)
-
-        self._context.track_node(self)
 
     def get_clock(self) -> Clock:
         """Get the clock used by the node."""

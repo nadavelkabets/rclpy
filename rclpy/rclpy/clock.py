@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import TracebackType
-from typing import Callable, Optional, Type, TYPE_CHECKING, TypedDict
+from typing import Callable, Optional, Type, TypedDict
 
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from typing_extensions import deprecated, TypeAlias
@@ -323,5 +323,6 @@ class Clock(BaseClock):
 
 @deprecated('Use Clock(clock_type=ClockType.ROS_TIME) instead.')
 class ROSClock(Clock):
+
     def __init__(self) -> None:
         super().__init__(clock_type=ClockType.ROS_TIME)

@@ -20,7 +20,6 @@ import rclpy
 from rclpy.clock import Clock
 from rclpy.clock import ClockChange
 from rclpy.clock import JumpThreshold
-from rclpy.clock import Clock
 from rclpy.clock_type import ClockType
 from rclpy.duration import Duration
 from rclpy.parameter import Parameter
