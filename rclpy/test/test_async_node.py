@@ -38,6 +38,10 @@ from std_msgs.msg import String
 
 from std_srvs.srv import SetBool
 
+from test_msgs.msg import BasicTypes
+
+from type_description_interfaces.srv import GetTypeDescription
+
 TEST_QOS = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     history=HistoryPolicy.KEEP_LAST,
@@ -283,7 +287,8 @@ async def test_wait_for_service_timeout():
     async with AsyncNode('test_wfs_timeout_node') as node:
         client = node.create_client(SetBool, '/nonexistent_service')
         with pytest.raises(TimeoutError):
-            await client.wait_for_service(timeout_sec=0.5)
+            async with asyncio.timeout(0.5):
+                await client.wait_for_service()
 
 
 @pytest.mark.asyncio
@@ -561,3 +566,134 @@ async def test_run_raises_if_already_running():
         with pytest.raises(RuntimeError):
             await node.run()
 
+
+@pytest.mark.asyncio
+async def test_type_description_service():
+    """Verify type description service responds to requests on AsyncNode."""
+    async with (
+        AsyncNode('test_type_desc_srv_node') as srv_node,
+        AsyncNode('test_type_desc_client_node') as client_node,
+    ):
+        topic = '/test_type_desc_basic_types'
+        srv_node.create_publisher(BasicTypes, topic, 10)
+
+        client = client_node.create_client(
+            GetTypeDescription,
+            '/test_type_desc_srv_node/get_type_description')
+
+        async with asyncio.timeout(5):
+            await client.wait_for_service()
+
+            pub_infos = srv_node.get_publishers_info_by_topic(topic)
+            assert len(pub_infos)
+            type_hash = pub_infos[0].topic_type_hash
+
+            request = GetTypeDescription.Request(
+                type_name='test_msgs/msg/BasicTypes',
+                type_hash=type_hash,
+                include_type_sources=True)
+            response = await client.call(request)
+
+        assert response.successful
+        assert (response.type_description.type_description.type_name
+                == 'test_msgs/msg/BasicTypes')
+        assert len(response.type_sources)
+
+
+@pytest.mark.asyncio
+async def test_graph_discovery_methods():
+    """Graph discovery methods are accessible on AsyncNode via BaseNode."""
+    async with AsyncNode('test_graph_node', namespace='/test_ns') as node:
+        topics = node.get_topic_names_and_types()
+        assert isinstance(topics, list)
+
+        services = node.get_service_names_and_types()
+        assert isinstance(services, list)
+
+        actions = node.get_action_names_and_types()
+        assert isinstance(actions, list)
+
+        names = node.get_node_names()
+        assert 'test_graph_node' in names
+
+        fq_names = node.get_fully_qualified_node_names()
+        assert '/test_ns/test_graph_node' in fq_names
+
+        names_ns = node.get_node_names_and_namespaces()
+        assert any(n == 'test_graph_node' and ns == '/test_ns'
+                   for n, ns in names_ns)
+
+        names_ns_enc = node.get_node_names_and_namespaces_with_enclaves()
+        assert isinstance(names_ns_enc, list)
+
+        fq_name = node.get_fully_qualified_name()
+        assert fq_name == '/test_ns/test_graph_node'
+
+
+@pytest.mark.asyncio
+async def test_count_methods():
+    """Count methods work on AsyncNode."""
+    async with AsyncNode('test_count_node') as node:
+        topic = '/test_count_topic'
+        node.create_publisher(String, topic, TEST_QOS)
+        node.create_subscription(String, topic, lambda msg: None, TEST_QOS)
+        assert node.count_publishers(topic) == 1
+        assert node.count_subscribers(topic) == 1
+
+
+@pytest.mark.asyncio
+async def test_endpoint_info_methods():
+    """Endpoint info methods work on AsyncNode."""
+    async with AsyncNode('test_endpoint_node') as node:
+        node.create_publisher(BasicTypes, '/test_endpoint_topic', TEST_QOS)
+
+        pub_info = node.get_publishers_info_by_topic('/test_endpoint_topic')
+        assert len(pub_info) == 1
+        assert pub_info[0].node_name == 'test_endpoint_node'
+
+        node.create_subscription(
+            BasicTypes, '/test_endpoint_topic', lambda msg: None, TEST_QOS)
+        sub_info = node.get_subscriptions_info_by_topic('/test_endpoint_topic')
+        assert len(sub_info) == 1
+        assert sub_info[0].node_name == 'test_endpoint_node'
+
+
+@pytest.mark.asyncio
+async def test_remote_node_introspection():
+    """Remote node introspection methods work on AsyncNode."""
+    async with AsyncNode('test_remote_node', namespace='/test_ns') as node:
+        pubs = node.get_publisher_names_and_types_by_node(
+            'test_remote_node', '/test_ns')
+        assert isinstance(pubs, list)
+
+        subs = node.get_subscriber_names_and_types_by_node(
+            'test_remote_node', '/test_ns')
+        assert isinstance(subs, list)
+
+        svcs = node.get_service_names_and_types_by_node(
+            'test_remote_node', '/test_ns')
+        assert isinstance(svcs, list)
+
+        clients = node.get_client_names_and_types_by_node(
+            'test_remote_node', '/test_ns')
+        assert isinstance(clients, list)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_node_async():
+    """Async wait_for_node finds an existing node."""
+    async with (
+        AsyncNode('test_wfn_target', namespace='/test_ns') as _,
+        AsyncNode('test_wfn_watcher', namespace='/test_ns') as watcher,
+    ):
+        async with asyncio.timeout(3.0):
+            await watcher.wait_for_node('/test_ns/test_wfn_target')
+
+
+@pytest.mark.asyncio
+async def test_wait_for_node_async_timeout():
+    """Async wait_for_node raises TimeoutError for nonexistent node."""
+    async with AsyncNode('test_wfn_timeout_node') as node:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.3):
+                await node.wait_for_node('nonexistent_node')

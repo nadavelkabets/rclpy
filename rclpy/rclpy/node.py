@@ -97,7 +97,6 @@ from rclpy.time_source import TimeSource
 from rclpy.timer import Rate
 from rclpy.timer import Timer
 from rclpy.timer import TimerCallbackType
-from rclpy.type_description_service import TypeDescriptionService
 from rclpy.type_support import check_is_valid_msg_type
 from rclpy.type_support import check_is_valid_srv_type
 from rclpy.type_support import MsgT
@@ -109,12 +108,15 @@ from rclpy.validate_full_topic_name import validate_full_topic_name
 from rclpy.validate_namespace import validate_namespace
 from rclpy.validate_node_name import validate_node_name
 from rclpy.validate_parameter_name import validate_parameter_name
+from rclpy.validate_topic_name import TOPIC_SEPARATOR_STRING
 from rclpy.validate_topic_name import validate_topic_name
 from rclpy.waitable import Waitable
+from type_description_interfaces.srv import GetTypeDescription
 from typing_extensions import TypeAlias
 
 
 HIDDEN_NODE_PREFIX: Final = '_'
+START_TYPE_DESCRIPTION_SERVICE_PARAM = 'start_type_description_service'
 
 # Left to support Legacy TypeVar.
 MsgType = TypeVar('MsgType')
@@ -165,6 +167,7 @@ class BaseNode(ABC):
         self._allow_undeclared_parameters = allow_undeclared_parameters
         self._parameter_overrides: Dict[str, Parameter[Any]] = {}
         self._descriptors: Dict[str, ParameterDescriptor] = {}
+        self._type_description_srv: Optional[_rclpy.TypeDescriptionService] = None
 
         namespace = namespace or ''
 
@@ -229,6 +232,7 @@ class BaseNode(ABC):
         if enable_logger_service:
             self._logger_service = LoggingService(self)
 
+        self._start_type_description_service()
         self._context.track_node(self)
 
     def _validate_qos_or_depth_parameter(self, qos_or_depth: Union[QoSProfile, int]) -> QoSProfile:
@@ -241,6 +245,39 @@ class BaseNode(ABC):
         else:
             raise TypeError(
                 'Expected QoSProfile or int, but received {!r}'.format(type(qos_or_depth)))
+
+    def _start_type_description_service(self) -> None:
+        if not self.has_parameter(START_TYPE_DESCRIPTION_SERVICE_PARAM):
+            descriptor = ParameterDescriptor(
+                name=START_TYPE_DESCRIPTION_SERVICE_PARAM,
+                type=ParameterType.PARAMETER_BOOL,
+                description=(
+                    'If enabled, start the ~/get_type_description service.'),
+                read_only=True)
+            self.declare_parameter(
+                START_TYPE_DESCRIPTION_SERVICE_PARAM, True, descriptor)
+        param = self.get_parameter(START_TYPE_DESCRIPTION_SERVICE_PARAM)
+        if param.type_ == Parameter.Type.BOOL and param.value:
+            self._type_description_srv = _rclpy.TypeDescriptionService(
+                self.handle)
+            check_is_valid_srv_type(GetTypeDescription)
+            srv_name = TOPIC_SEPARATOR_STRING.join(
+                (self.get_name(), 'get_type_description'))
+            self._register_service(
+                self._type_description_srv.impl,
+                GetTypeDescription,
+                srv_name,
+                self._type_description_callback,
+                qos_profile_services_default)
+
+    async def _type_description_callback(
+        self,
+        request: GetTypeDescription.Request,
+        _response: GetTypeDescription.Response,
+    ) -> GetTypeDescription.Response:
+        assert self._type_description_srv is not None
+        return self._type_description_srv.handle_request(
+            request, GetTypeDescription.Response, self.handle)
 
     @property
     def handle(self) -> _rclpy.Node:
@@ -1523,663 +1560,6 @@ class BaseNode(ABC):
             self._validate_topic_or_service_name(srv_name, is_service=True)
         return client_handle
 
-    @abstractmethod
-    def create_publisher(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        qos_profile: Union[QoSProfile, int],
-    ) -> BasePublisher[MsgT]:
-        ...
-
-    @abstractmethod
-    def create_subscription(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        callback: AsyncGenericSubscriptionCallback[MsgT],
-        qos_profile: Union[QoSProfile, int],
-    ) -> BaseSubscription[MsgT]:
-        ...
-
-    @abstractmethod
-    def create_service(
-        self,
-        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-    ) -> BaseService[SrvRequestT, SrvResponseT]:
-        ...
-
-    @abstractmethod
-    def create_client(
-        self,
-        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-    ) -> BaseClient[SrvRequestT, SrvResponseT]:
-        ...
-
-    @abstractmethod
-    def get_clock(self) -> BaseClock:
-        """Get the clock used by the node."""
-        ...
-
-
-class Node(BaseNode):
-    """
-    A Node in the ROS graph.
-
-    A Node is the primary entrypoint in a ROS system for communication.
-    It can be used to create ROS entities such as publishers, subscribers, services, etc.
-    """
-
-    def __init__(
-        self,
-        node_name: str,
-        *,
-        context: Optional[Context] = None,
-        cli_args: Optional[List[str]] = None,
-        namespace: Optional[str] = None,
-        use_global_arguments: bool = True,
-        enable_rosout: bool = True,
-        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
-        start_parameter_services: bool = True,
-        parameter_overrides: Optional[List[Parameter[Any]]] = None,
-        allow_undeclared_parameters: bool = False,
-        automatically_declare_parameters_from_overrides: bool = False,
-        enable_logger_service: bool = False
-    ) -> None:
-        """
-        Create a Node.
-
-        :param node_name: A name to give to this node. Validated by :func:`validate_node_name`.
-        :param context: The context to be associated with, or ``None`` for the default global
-            context.
-        :param cli_args: A list of strings of command line args to be used only by this node.
-            These arguments are used to extract remappings used by the node and other ROS specific
-            settings, as well as user defined non-ROS arguments.
-        :param namespace: The namespace to which relative topic and service names will be prefixed.
-            Validated by :func:`validate_namespace`.
-        :param use_global_arguments: ``False`` if the node should ignore process-wide command line
-            args.
-        :param enable_rosout: ``False`` if the node should ignore rosout logging.
-        :param rosout_qos_profile: A QoSProfile or a history depth to apply to rosout publisher.
-            In the case that a history depth is provided, the QoS history is set to KEEP_LAST
-            the QoS history depth is set to the value of the parameter,
-            and all other QoS settings are set to their default value.
-        :param start_parameter_services: ``False`` if the node should not create parameter
-            services.
-        :param parameter_overrides: A list of overrides for initial values for parameters declared
-            on the node.
-        :param allow_undeclared_parameters: True if undeclared parameters are allowed.
-            This flag affects the behavior of parameter-related operations.
-        :param automatically_declare_parameters_from_overrides: If True, the "parameter overrides"
-            will be used to implicitly declare parameters on the node during creation.
-        :param enable_logger_service: ``True`` if ROS2 services are created to allow external nodes
-            to get and set logger levels of this node. Otherwise, logger levels are only managed
-            locally. That is, logger levels cannot be changed remotely.
-        """
-        self._publishers: List[Publisher[Any]] = []
-        self._subscriptions: List[Subscription[Any]] = []
-        self._clients: List[Client[Any, Any]] = []
-        self._services: List[Service[Any, Any]] = []
-        self._timers: List[Timer] = []
-        self._guards: List[GuardCondition] = []
-        self.__waitables: List[Waitable[Any]] = []
-        self._default_callback_group = MutuallyExclusiveCallbackGroup()
-        self._rate_group = ReentrantCallbackGroup()
-        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
-        self._clock = Clock(clock_type=ClockType.ROS_TIME)
-
-        super().__init__(
-            node_name=node_name,
-            context=context,
-            cli_args=cli_args,
-            namespace=namespace,
-            use_global_arguments=use_global_arguments,
-            enable_rosout=enable_rosout,
-            rosout_qos_profile=rosout_qos_profile,
-            start_parameter_services=start_parameter_services,
-            parameter_overrides=parameter_overrides,
-            allow_undeclared_parameters=allow_undeclared_parameters,
-            automatically_declare_parameters_from_overrides=(
-                automatically_declare_parameters_from_overrides),
-            enable_logger_service=enable_logger_service,
-        )
-
-        self._type_description_service = TypeDescriptionService(self)
-
-    def get_clock(self) -> Clock:
-        """Get the clock used by the node."""
-        return self._clock
-
-    @property
-    def publishers(self) -> Iterator[Publisher[Any]]:
-        """Get publishers that have been created on this node."""
-        yield from self._publishers
-
-    @property
-    def subscriptions(self) -> Iterator[Subscription[Any]]:
-        """Get subscriptions that have been created on this node."""
-        yield from self._subscriptions
-
-    @property
-    def clients(self) -> Iterator[Client[Any, Any]]:
-        """Get clients that have been created on this node."""
-        yield from self._clients
-
-    @property
-    def services(self) -> Iterator[Service[Any, Any]]:
-        """Get services that have been created on this node."""
-        yield from self._services
-
-    @property
-    def timers(self) -> Iterator[Timer]:
-        """Get timers that have been created on this node."""
-        yield from self._timers
-
-    @property
-    def guards(self) -> Iterator[GuardCondition]:
-        """Get guards that have been created on this node."""
-        yield from self._guards
-
-    @property
-    def waitables(self) -> Iterator[Waitable[Any]]:
-        """Get waitables that have been created on this node."""
-        yield from self.__waitables
-
-    @property
-    def executor(self) -> Optional[Executor]:
-        """Get the executor if the node has been added to one, else return ``None``."""
-        if self.__executor_weakref:
-            return self.__executor_weakref()
-        return None
-
-    @executor.setter
-    def executor(self, new_executor: Optional[Executor]) -> None:
-        """Set or change the executor the node belongs to."""
-        current_executor = self.executor
-        if current_executor == new_executor:
-            return
-        if current_executor is not None:
-            current_executor.remove_node(self)
-        if new_executor is None:
-            self.__executor_weakref = None
-        else:
-            new_executor.add_node(self)
-            self.__executor_weakref = weakref.ref(new_executor)
-
-    def _wake_executor(self) -> None:
-        executor = self.executor
-        if executor:
-            executor.wake()
-
-    @property
-    def default_callback_group(self) -> CallbackGroup:
-        """
-        Get the default callback group.
-
-        If no other callback group is provided when the a ROS entity is created with the node,
-        then it is added to the default callback group.
-        """
-        return self._default_callback_group
-
-    def add_waitable(self, waitable: Waitable[Any]) -> None:
-        """
-        Add a class that is capable of adding things to the wait set.
-
-        :param waitable: An instance of a waitable that the node will add to the waitset.
-        """
-        self.__waitables.append(waitable)
-        self._wake_executor()
-
-    def remove_waitable(self, waitable: Waitable[Any]) -> None:
-        """
-        Remove a Waitable that was previously added to the node.
-
-        :param waitable: The Waitable to remove.
-        """
-        self.__waitables.remove(waitable)
-        self._wake_executor()
-
-    def create_publisher(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        qos_profile: Union[QoSProfile, int],
-        *,
-        callback_group: Optional[CallbackGroup] = None,
-        event_callbacks: Optional[PublisherEventCallbacks] = None,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-        publisher_class: Type[Publisher[MsgT]] = Publisher,
-    ) -> Publisher[MsgT]:
-        """
-        Create a new publisher.
-
-        :param msg_type: The type of ROS messages the publisher will publish.
-        :param topic: The name of the topic the publisher will publish to.
-        :param qos_profile: A QoSProfile or a history depth to apply to the publisher.
-            In the case that a history depth is provided, the QoS history is set to
-            KEEP_LAST, the QoS history depth is set to the value
-            of the parameter, and all other QoS settings are set to their default values.
-        :param callback_group: The callback group for the publisher's event handlers.
-            If ``None``, then the default callback group for the node is used.
-        :param event_callbacks: User-defined callbacks for middleware events.
-        :return: The new publisher.
-        """
-        qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
-
-        callback_group = callback_group or self.default_callback_group
-
-        publisher_object = self._create_publisher_handle(
-            msg_type, topic, qos_profile,
-            qos_overriding_options=qos_overriding_options)
-
-        try:
-            publisher = publisher_class(
-                publisher_object, msg_type, topic, qos_profile,
-                event_callbacks=event_callbacks or PublisherEventCallbacks(),
-                callback_group=callback_group)
-        except Exception:
-            publisher_object.destroy_when_not_in_use()
-            raise
-        self._publishers.append(publisher)
-        self._wake_executor()
-
-        for event_callback in publisher.event_handlers:
-            self.add_waitable(event_callback)
-
-        return publisher
-
-    @overload
-    def create_subscription(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        callback: Union[GenericSubscriptionCallback[bytes],
-                        AsyncGenericSubscriptionCallback[bytes]],
-        qos_profile: Union[QoSProfile, int],
-        *,
-        callback_group: Optional[CallbackGroup] = None,
-        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-        raw: Literal[True],
-        content_filter_options: Optional[ContentFilterOptions] = None
-    ) -> Subscription[MsgT]: ...
-
-    @overload
-    def create_subscription(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        callback: Union[GenericSubscriptionCallback[MsgT],
-                        AsyncGenericSubscriptionCallback[MsgT]],
-        qos_profile: Union[QoSProfile, int],
-        *,
-        callback_group: Optional[CallbackGroup] = None,
-        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-        raw: bool = False,
-        content_filter_options: Optional[ContentFilterOptions] = None
-    ) -> Subscription[MsgT]: ...
-
-    def create_subscription(
-        self,
-        msg_type: Type[MsgT],
-        topic: str,
-        callback: SubscriptionCallbackUnion[MsgT],
-        qos_profile: Union[QoSProfile, int],
-        *,
-        callback_group: Optional[CallbackGroup] = None,
-        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
-        qos_overriding_options: Optional[QoSOverridingOptions] = None,
-        raw: bool = False,
-        content_filter_options: Optional[ContentFilterOptions] = None
-    ) -> Subscription[MsgT]:
-        """
-        Create a new subscription.
-
-        :param msg_type: The type of ROS messages the subscription will subscribe to.
-        :param topic: The name of the topic the subscription will subscribe to.
-        :param callback: A user-defined callback function that is called when a message is
-            received by the subscription.
-        :param qos_profile: A QoSProfile or a history depth to apply to the subscription.
-            In the case that a history depth is provided, the QoS history is set to
-            KEEP_LAST, the QoS history depth is set to the value
-            of the parameter, and all other QoS settings are set to their default values.
-        :param callback_group: The callback group for the subscription. If ``None``, then the
-            default callback group for the node is used.
-        :param event_callbacks: User-defined callbacks for middleware events.
-        :param raw: If ``True``, then received messages will be stored in raw binary
-            representation.
-        :param content_filter_options: The filter expression and parameters for content filtering.
-        """
-        qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
-        callback_group = callback_group or self.default_callback_group
-
-        subscription_object = self._create_subscription_handle(
-            msg_type, topic, qos_profile,
-            qos_overriding_options=qos_overriding_options,
-            content_filter_options=content_filter_options)
-
-        try:
-            subscription = Subscription(
-                subscription_object, msg_type,
-                topic, callback, callback_group, qos_profile, raw,
-                event_callbacks=event_callbacks or SubscriptionEventCallbacks())
-        except Exception:
-            subscription_object.destroy_when_not_in_use()
-            raise
-        callback_group.add_entity(subscription)
-        self._subscriptions.append(subscription)
-        self._wake_executor()
-
-        for event_handler in subscription.event_handlers:
-            self.add_waitable(event_handler)
-
-        return subscription
-
-    def create_client(
-        self,
-        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-        callback_group: Optional[CallbackGroup] = None
-    ) -> Client[SrvRequestT, SrvResponseT]:
-        """
-        Create a new service client.
-
-        :param srv_type: The service type.
-        :param srv_name: The name of the service.
-        :param qos_profile: The quality of service profile to apply the service client.
-        :param callback_group: The callback group for the service client. If ``None``, then the
-            default callback group for the node is used.
-        """
-        if callback_group is None:
-            callback_group = self.default_callback_group
-
-        client_impl = self._create_client_handle(
-            srv_type, srv_name, qos_profile=qos_profile)
-
-        client = Client(
-            self.context,
-            client_impl, srv_type, srv_name, qos_profile,
-            callback_group)
-        callback_group.add_entity(client)
-        self._clients.append(client)
-        self._wake_executor()
-        return client
-
-    def create_service(
-        self,
-        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
-        srv_name: str,
-        callback: Union[Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
-                        Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]]],
-        *,
-        qos_profile: QoSProfile = qos_profile_services_default,
-        callback_group: Optional[CallbackGroup] = None
-    ) -> Service[SrvRequestT, SrvResponseT]:
-        """
-        Create a new service server.
-
-        :param srv_type: The service type.
-        :param srv_name: The name of the service.
-        :param callback: A user-defined callback function that is called when a service request
-            received by the server.
-        :param qos_profile: The quality of service profile to apply the service server.
-        :param callback_group: The callback group for the service server. If ``None``, then the
-            default callback group for the node is used.
-        """
-        if callback_group is None:
-            callback_group = self.default_callback_group
-
-        service_impl = self._create_service_handle(
-            srv_type, srv_name, qos_profile=qos_profile)
-
-        service = Service(
-            service_impl,
-            srv_type, srv_name, callback, callback_group, qos_profile)
-        callback_group.add_entity(service)
-        self._services.append(service)
-        self._wake_executor()
-        return service
-
-    def create_timer(
-        self,
-        timer_period_sec: float,
-        callback: Optional[TimerCallbackType],
-        callback_group: Optional[CallbackGroup] = None,
-        clock: Optional[Clock] = None,
-        autostart: bool = True,
-    ) -> Timer:
-        """
-        Create a new timer.
-
-        If autostart is ``True`` (the default), the timer will be started and every
-        ``timer_period_sec`` number of seconds the provided callback function will be called.
-        If autostart is ``False``, the timer will be created but not started; it can then be
-        started by calling ``reset()`` on the timer object.
-
-        :param timer_period_sec: The period (in seconds) of the timer.
-        :param callback: A user-defined callback function that is called when the timer expires.
-        :param callback_group: The callback group for the timer. If ``None``, then the
-            default callback group for the node is used.
-        :param clock: The clock which the timer gets time from.
-        :param autostart: Whether to automatically start the timer after creation; defaults to
-            ``True``.
-        """
-        timer_period_nsec = int(float(timer_period_sec) * S_TO_NS)
-        if callback_group is None:
-            callback_group = self.default_callback_group
-        if clock is None:
-            clock = self.get_clock()
-        timer = Timer(
-            timer_period_nsec, clock, callback=callback,
-            callback_group=callback_group, context=self.context, autostart=autostart)
-
-        callback_group.add_entity(timer)
-        self._timers.append(timer)
-        self._wake_executor()
-        return timer
-
-    def create_guard_condition(
-        self,
-        callback: GuardConditionCallbackType,
-        callback_group: Optional[CallbackGroup] = None
-    ) -> GuardCondition:
-        """
-        Create a new guard condition.
-
-        .. warning:: Users should call :meth:`.Node.destroy_guard_condition` to destroy
-           the GuardCondition object.
-        """
-        if callback_group is None:
-            callback_group = self.default_callback_group
-        guard = GuardCondition(callback, callback_group, context=self.context)
-
-        callback_group.add_entity(guard)
-        self._guards.append(guard)
-        self._wake_executor()
-        return guard
-
-    def create_rate(
-        self,
-        frequency: float,
-        clock: Optional[Clock] = None,
-    ) -> Rate:
-        """
-        Create a Rate object.
-
-        .. warning:: Users should call :meth:`.Node.destroy_rate` to destroy the Rate object.
-
-        :param frequency: The frequency the Rate runs at (Hz).
-        :param clock: The clock the Rate gets time from.
-        """
-        if frequency <= 0:
-            raise ValueError('frequency must be > 0')
-        # Create a timer and give it to the rate object
-        period = 1.0 / frequency
-        # Rate will set its own callback
-        callback = None
-        # Rates get their own group so timing is not messed up by other callbacks
-        group = self._rate_group
-        timer = self.create_timer(period, callback, group, clock)
-        return Rate(timer, context=self.context)
-
-    def destroy_publisher(self, publisher: Publisher[Any]) -> bool:
-        """
-        Destroy a publisher created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if publisher in self._publishers:
-            self._publishers.remove(publisher)
-            for event_handler in publisher.event_handlers:
-                self.__waitables.remove(event_handler)
-            try:
-                publisher.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_subscription(self, subscription: Subscription[Any]) -> bool:
-        """
-        Destroy a subscription created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if subscription in self._subscriptions:
-            self._subscriptions.remove(subscription)
-            for event_handler in subscription.event_handlers:
-                self.__waitables.remove(event_handler)
-            try:
-                subscription.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_client(self, client: Client[Any, Any]) -> bool:
-        """
-        Destroy a service client created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if client in self._clients:
-            self._clients.remove(client)
-            try:
-                client.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_service(self, service: Service[Any, Any]) -> bool:
-        """
-        Destroy a service server created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if service in self._services:
-            self._services.remove(service)
-            try:
-                service.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_timer(self, timer: Timer) -> bool:
-        """
-        Destroy a timer created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if timer in self._timers:
-            self._timers.remove(timer)
-            try:
-                timer.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_guard_condition(self, guard: GuardCondition) -> bool:
-        """
-        Destroy a guard condition created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        if guard in self._guards:
-            self._guards.remove(guard)
-            try:
-                guard.destroy()
-            except InvalidHandle:
-                return False
-            self._wake_executor()
-            return True
-        return False
-
-    def destroy_rate(self, rate: Rate) -> bool:
-        """
-        Destroy a Rate object created by the node.
-
-        :return: ``True`` if successful, ``False`` otherwise.
-        """
-        success = self.destroy_timer(rate._timer)
-        rate.destroy()
-        return success
-
-    def destroy_node(self) -> None:
-        """
-        Destroy the node.
-
-        Frees resources used by the node, including any entities created by the following methods:
-
-        * :func:`create_publisher`
-        * :func:`create_subscription`
-        * :func:`create_client`
-        * :func:`create_service`
-        * :func:`create_timer`
-        * :func:`create_guard_condition`
-
-        """
-        self._context.untrack_node(self)
-
-        # Drop extra reference to parameter event publisher.
-        # It will be destroyed with other publishers below.
-        self._parameter_event_publisher = None
-
-        # Destroy dependent items eagerly to work around a possible hang
-        # https://github.com/ros2/build_cop/issues/248
-        while self._publishers:
-            self.destroy_publisher(self._publishers[0])
-        while self._subscriptions:
-            self.destroy_subscription(self._subscriptions[0])
-        while self._clients:
-            self.destroy_client(self._clients[0])
-        while self._services:
-            self.destroy_service(self._services[0])
-        while self._timers:
-            self.destroy_timer(self._timers[0])
-        while self._guards:
-            self.destroy_guard_condition(self._guards[0])
-        self._type_description_service.destroy()
-        self.handle.destroy_when_not_in_use()
-        self._wake_executor()
-
     def get_publisher_names_and_types_by_node(
         self,
         node_name: str,
@@ -2630,6 +2010,684 @@ class Node(BaseNode):
             service_name,
             no_mangle,
             _rclpy.rclpy_get_servers_info_by_service)
+
+    @abstractmethod
+    def create_publisher(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: Union[QoSProfile, int],
+    ) -> BasePublisher[MsgT]:
+        ...
+
+    @abstractmethod
+    def create_subscription(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        callback: AsyncGenericSubscriptionCallback[MsgT],
+        qos_profile: Union[QoSProfile, int],
+    ) -> BaseSubscription[MsgT]:
+        ...
+
+    @abstractmethod
+    def create_service(
+        self,
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> BaseService[SrvRequestT, SrvResponseT]:
+        ...
+
+    @abstractmethod
+    def _register_service(
+        self,
+        service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]',
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
+        qos_profile: QoSProfile,
+    ) -> BaseService[SrvRequestT, SrvResponseT]:
+        ...
+
+    @abstractmethod
+    def create_client(
+        self,
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+    ) -> BaseClient[SrvRequestT, SrvResponseT]:
+        ...
+
+    @abstractmethod
+    def get_clock(self) -> BaseClock:
+        """Get the clock used by the node."""
+        ...
+
+
+class Node(BaseNode):
+    """
+    A Node in the ROS graph.
+
+    A Node is the primary entrypoint in a ROS system for communication.
+    It can be used to create ROS entities such as publishers, subscribers, services, etc.
+    """
+
+    def __init__(
+        self,
+        node_name: str,
+        *,
+        context: Optional[Context] = None,
+        cli_args: Optional[List[str]] = None,
+        namespace: Optional[str] = None,
+        use_global_arguments: bool = True,
+        enable_rosout: bool = True,
+        rosout_qos_profile: Union[QoSProfile, int] = qos_profile_rosout_default,
+        start_parameter_services: bool = True,
+        parameter_overrides: Optional[List[Parameter[Any]]] = None,
+        allow_undeclared_parameters: bool = False,
+        automatically_declare_parameters_from_overrides: bool = False,
+        enable_logger_service: bool = False
+    ) -> None:
+        """
+        Create a Node.
+
+        :param node_name: A name to give to this node. Validated by :func:`validate_node_name`.
+        :param context: The context to be associated with, or ``None`` for the default global
+            context.
+        :param cli_args: A list of strings of command line args to be used only by this node.
+            These arguments are used to extract remappings used by the node and other ROS specific
+            settings, as well as user defined non-ROS arguments.
+        :param namespace: The namespace to which relative topic and service names will be prefixed.
+            Validated by :func:`validate_namespace`.
+        :param use_global_arguments: ``False`` if the node should ignore process-wide command line
+            args.
+        :param enable_rosout: ``False`` if the node should ignore rosout logging.
+        :param rosout_qos_profile: A QoSProfile or a history depth to apply to rosout publisher.
+            In the case that a history depth is provided, the QoS history is set to KEEP_LAST
+            the QoS history depth is set to the value of the parameter,
+            and all other QoS settings are set to their default value.
+        :param start_parameter_services: ``False`` if the node should not create parameter
+            services.
+        :param parameter_overrides: A list of overrides for initial values for parameters declared
+            on the node.
+        :param allow_undeclared_parameters: True if undeclared parameters are allowed.
+            This flag affects the behavior of parameter-related operations.
+        :param automatically_declare_parameters_from_overrides: If True, the "parameter overrides"
+            will be used to implicitly declare parameters on the node during creation.
+        :param enable_logger_service: ``True`` if ROS2 services are created to allow external nodes
+            to get and set logger levels of this node. Otherwise, logger levels are only managed
+            locally. That is, logger levels cannot be changed remotely.
+        """
+        self._publishers: List[Publisher[Any]] = []
+        self._subscriptions: List[Subscription[Any]] = []
+        self._clients: List[Client[Any, Any]] = []
+        self._services: List[Service[Any, Any]] = []
+        self._timers: List[Timer] = []
+        self._guards: List[GuardCondition] = []
+        self.__waitables: List[Waitable[Any]] = []
+        self._default_callback_group = MutuallyExclusiveCallbackGroup()
+        self._rate_group = ReentrantCallbackGroup()
+        self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
+        self._clock = Clock(clock_type=ClockType.ROS_TIME)
+
+        super().__init__(
+            node_name=node_name,
+            context=context,
+            cli_args=cli_args,
+            namespace=namespace,
+            use_global_arguments=use_global_arguments,
+            enable_rosout=enable_rosout,
+            rosout_qos_profile=rosout_qos_profile,
+            start_parameter_services=start_parameter_services,
+            parameter_overrides=parameter_overrides,
+            allow_undeclared_parameters=allow_undeclared_parameters,
+            automatically_declare_parameters_from_overrides=(
+                automatically_declare_parameters_from_overrides),
+            enable_logger_service=enable_logger_service,
+        )
+
+    def get_clock(self) -> Clock:
+        """Get the clock used by the node."""
+        return self._clock
+
+    @property
+    def publishers(self) -> Iterator[Publisher[Any]]:
+        """Get publishers that have been created on this node."""
+        yield from self._publishers
+
+    @property
+    def subscriptions(self) -> Iterator[Subscription[Any]]:
+        """Get subscriptions that have been created on this node."""
+        yield from self._subscriptions
+
+    @property
+    def clients(self) -> Iterator[Client[Any, Any]]:
+        """Get clients that have been created on this node."""
+        yield from self._clients
+
+    @property
+    def services(self) -> Iterator[Service[Any, Any]]:
+        """Get services that have been created on this node."""
+        yield from self._services
+
+    @property
+    def timers(self) -> Iterator[Timer]:
+        """Get timers that have been created on this node."""
+        yield from self._timers
+
+    @property
+    def guards(self) -> Iterator[GuardCondition]:
+        """Get guards that have been created on this node."""
+        yield from self._guards
+
+    @property
+    def waitables(self) -> Iterator[Waitable[Any]]:
+        """Get waitables that have been created on this node."""
+        yield from self.__waitables
+
+    @property
+    def executor(self) -> Optional[Executor]:
+        """Get the executor if the node has been added to one, else return ``None``."""
+        if self.__executor_weakref:
+            return self.__executor_weakref()
+        return None
+
+    @executor.setter
+    def executor(self, new_executor: Optional[Executor]) -> None:
+        """Set or change the executor the node belongs to."""
+        current_executor = self.executor
+        if current_executor == new_executor:
+            return
+        if current_executor is not None:
+            current_executor.remove_node(self)
+        if new_executor is None:
+            self.__executor_weakref = None
+        else:
+            new_executor.add_node(self)
+            self.__executor_weakref = weakref.ref(new_executor)
+
+    def _wake_executor(self) -> None:
+        executor = self.executor
+        if executor:
+            executor.wake()
+
+    @property
+    def default_callback_group(self) -> CallbackGroup:
+        """
+        Get the default callback group.
+
+        If no other callback group is provided when the a ROS entity is created with the node,
+        then it is added to the default callback group.
+        """
+        return self._default_callback_group
+
+    def add_waitable(self, waitable: Waitable[Any]) -> None:
+        """
+        Add a class that is capable of adding things to the wait set.
+
+        :param waitable: An instance of a waitable that the node will add to the waitset.
+        """
+        self.__waitables.append(waitable)
+        self._wake_executor()
+
+    def remove_waitable(self, waitable: Waitable[Any]) -> None:
+        """
+        Remove a Waitable that was previously added to the node.
+
+        :param waitable: The Waitable to remove.
+        """
+        self.__waitables.remove(waitable)
+        self._wake_executor()
+
+    def create_publisher(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        qos_profile: Union[QoSProfile, int],
+        *,
+        callback_group: Optional[CallbackGroup] = None,
+        event_callbacks: Optional[PublisherEventCallbacks] = None,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        publisher_class: Type[Publisher[MsgT]] = Publisher,
+    ) -> Publisher[MsgT]:
+        """
+        Create a new publisher.
+
+        :param msg_type: The type of ROS messages the publisher will publish.
+        :param topic: The name of the topic the publisher will publish to.
+        :param qos_profile: A QoSProfile or a history depth to apply to the publisher.
+            In the case that a history depth is provided, the QoS history is set to
+            KEEP_LAST, the QoS history depth is set to the value
+            of the parameter, and all other QoS settings are set to their default values.
+        :param callback_group: The callback group for the publisher's event handlers.
+            If ``None``, then the default callback group for the node is used.
+        :param event_callbacks: User-defined callbacks for middleware events.
+        :return: The new publisher.
+        """
+        qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
+
+        callback_group = callback_group or self.default_callback_group
+
+        publisher_object = self._create_publisher_handle(
+            msg_type, topic, qos_profile,
+            qos_overriding_options=qos_overriding_options)
+
+        try:
+            publisher = publisher_class(
+                publisher_object, msg_type, topic, qos_profile,
+                event_callbacks=event_callbacks or PublisherEventCallbacks(),
+                callback_group=callback_group)
+        except Exception:
+            publisher_object.destroy_when_not_in_use()
+            raise
+        self._publishers.append(publisher)
+        self._wake_executor()
+
+        for event_callback in publisher.event_handlers:
+            self.add_waitable(event_callback)
+
+        return publisher
+
+    @overload
+    def create_subscription(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        callback: Union[GenericSubscriptionCallback[bytes],
+                        AsyncGenericSubscriptionCallback[bytes]],
+        qos_profile: Union[QoSProfile, int],
+        *,
+        callback_group: Optional[CallbackGroup] = None,
+        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        raw: Literal[True],
+        content_filter_options: Optional[ContentFilterOptions] = None
+    ) -> Subscription[MsgT]: ...
+
+    @overload
+    def create_subscription(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        callback: Union[GenericSubscriptionCallback[MsgT],
+                        AsyncGenericSubscriptionCallback[MsgT]],
+        qos_profile: Union[QoSProfile, int],
+        *,
+        callback_group: Optional[CallbackGroup] = None,
+        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        raw: bool = False,
+        content_filter_options: Optional[ContentFilterOptions] = None
+    ) -> Subscription[MsgT]: ...
+
+    def create_subscription(
+        self,
+        msg_type: Type[MsgT],
+        topic: str,
+        callback: SubscriptionCallbackUnion[MsgT],
+        qos_profile: Union[QoSProfile, int],
+        *,
+        callback_group: Optional[CallbackGroup] = None,
+        event_callbacks: Optional[SubscriptionEventCallbacks] = None,
+        qos_overriding_options: Optional[QoSOverridingOptions] = None,
+        raw: bool = False,
+        content_filter_options: Optional[ContentFilterOptions] = None
+    ) -> Subscription[MsgT]:
+        """
+        Create a new subscription.
+
+        :param msg_type: The type of ROS messages the subscription will subscribe to.
+        :param topic: The name of the topic the subscription will subscribe to.
+        :param callback: A user-defined callback function that is called when a message is
+            received by the subscription.
+        :param qos_profile: A QoSProfile or a history depth to apply to the subscription.
+            In the case that a history depth is provided, the QoS history is set to
+            KEEP_LAST, the QoS history depth is set to the value
+            of the parameter, and all other QoS settings are set to their default values.
+        :param callback_group: The callback group for the subscription. If ``None``, then the
+            default callback group for the node is used.
+        :param event_callbacks: User-defined callbacks for middleware events.
+        :param raw: If ``True``, then received messages will be stored in raw binary
+            representation.
+        :param content_filter_options: The filter expression and parameters for content filtering.
+        """
+        qos_profile = self._validate_qos_or_depth_parameter(qos_profile)
+        callback_group = callback_group or self.default_callback_group
+
+        subscription_object = self._create_subscription_handle(
+            msg_type, topic, qos_profile,
+            qos_overriding_options=qos_overriding_options,
+            content_filter_options=content_filter_options)
+
+        try:
+            subscription = Subscription(
+                subscription_object, msg_type,
+                topic, callback, callback_group, qos_profile, raw,
+                event_callbacks=event_callbacks or SubscriptionEventCallbacks())
+        except Exception:
+            subscription_object.destroy_when_not_in_use()
+            raise
+        callback_group.add_entity(subscription)
+        self._subscriptions.append(subscription)
+        self._wake_executor()
+
+        for event_handler in subscription.event_handlers:
+            self.add_waitable(event_handler)
+
+        return subscription
+
+    def create_client(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+        callback_group: Optional[CallbackGroup] = None
+    ) -> Client[SrvRequestT, SrvResponseT]:
+        """
+        Create a new service client.
+
+        :param srv_type: The service type.
+        :param srv_name: The name of the service.
+        :param qos_profile: The quality of service profile to apply the service client.
+        :param callback_group: The callback group for the service client. If ``None``, then the
+            default callback group for the node is used.
+        """
+        if callback_group is None:
+            callback_group = self.default_callback_group
+
+        client_impl = self._create_client_handle(
+            srv_type, srv_name, qos_profile=qos_profile)
+
+        client = Client(
+            self.context,
+            client_impl, srv_type, srv_name, qos_profile,
+            callback_group)
+        callback_group.add_entity(client)
+        self._clients.append(client)
+        self._wake_executor()
+        return client
+
+    def _register_service(
+        self,
+        service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]',
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Union[Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
+                        Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]]],
+        qos_profile: QoSProfile,
+        *,
+        callback_group: Optional[CallbackGroup] = None,
+    ) -> Service[SrvRequestT, SrvResponseT]:
+        if callback_group is None:
+            callback_group = self.default_callback_group
+        service = Service(
+            service_impl,
+            srv_type, srv_name, callback, callback_group, qos_profile)
+        callback_group.add_entity(service)
+        self._services.append(service)
+        self._wake_executor()
+        return service
+
+    def create_service(
+        self,
+        srv_type: type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Union[Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
+                        Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]]],
+        *,
+        qos_profile: QoSProfile = qos_profile_services_default,
+        callback_group: Optional[CallbackGroup] = None
+    ) -> Service[SrvRequestT, SrvResponseT]:
+        """
+        Create a new service server.
+
+        :param srv_type: The service type.
+        :param srv_name: The name of the service.
+        :param callback: A user-defined callback function that is called when a service request
+            received by the server.
+        :param qos_profile: The quality of service profile to apply the service server.
+        :param callback_group: The callback group for the service server. If ``None``, then the
+            default callback group for the node is used.
+        """
+        service_impl = self._create_service_handle(
+            srv_type, srv_name, qos_profile=qos_profile)
+        return self._register_service(
+            service_impl, srv_type, srv_name, callback, qos_profile,
+            callback_group=callback_group)
+
+    def create_timer(
+        self,
+        timer_period_sec: float,
+        callback: Optional[TimerCallbackType],
+        callback_group: Optional[CallbackGroup] = None,
+        clock: Optional[Clock] = None,
+        autostart: bool = True,
+    ) -> Timer:
+        """
+        Create a new timer.
+
+        If autostart is ``True`` (the default), the timer will be started and every
+        ``timer_period_sec`` number of seconds the provided callback function will be called.
+        If autostart is ``False``, the timer will be created but not started; it can then be
+        started by calling ``reset()`` on the timer object.
+
+        :param timer_period_sec: The period (in seconds) of the timer.
+        :param callback: A user-defined callback function that is called when the timer expires.
+        :param callback_group: The callback group for the timer. If ``None``, then the
+            default callback group for the node is used.
+        :param clock: The clock which the timer gets time from.
+        :param autostart: Whether to automatically start the timer after creation; defaults to
+            ``True``.
+        """
+        timer_period_nsec = int(float(timer_period_sec) * S_TO_NS)
+        if callback_group is None:
+            callback_group = self.default_callback_group
+        if clock is None:
+            clock = self.get_clock()
+        timer = Timer(
+            timer_period_nsec, clock, callback=callback,
+            callback_group=callback_group, context=self.context, autostart=autostart)
+
+        callback_group.add_entity(timer)
+        self._timers.append(timer)
+        self._wake_executor()
+        return timer
+
+    def create_guard_condition(
+        self,
+        callback: GuardConditionCallbackType,
+        callback_group: Optional[CallbackGroup] = None
+    ) -> GuardCondition:
+        """
+        Create a new guard condition.
+
+        .. warning:: Users should call :meth:`.Node.destroy_guard_condition` to destroy
+           the GuardCondition object.
+        """
+        if callback_group is None:
+            callback_group = self.default_callback_group
+        guard = GuardCondition(callback, callback_group, context=self.context)
+
+        callback_group.add_entity(guard)
+        self._guards.append(guard)
+        self._wake_executor()
+        return guard
+
+    def create_rate(
+        self,
+        frequency: float,
+        clock: Optional[Clock] = None,
+    ) -> Rate:
+        """
+        Create a Rate object.
+
+        .. warning:: Users should call :meth:`.Node.destroy_rate` to destroy the Rate object.
+
+        :param frequency: The frequency the Rate runs at (Hz).
+        :param clock: The clock the Rate gets time from.
+        """
+        if frequency <= 0:
+            raise ValueError('frequency must be > 0')
+        # Create a timer and give it to the rate object
+        period = 1.0 / frequency
+        # Rate will set its own callback
+        callback = None
+        # Rates get their own group so timing is not messed up by other callbacks
+        group = self._rate_group
+        timer = self.create_timer(period, callback, group, clock)
+        return Rate(timer, context=self.context)
+
+    def destroy_publisher(self, publisher: Publisher[Any]) -> bool:
+        """
+        Destroy a publisher created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if publisher in self._publishers:
+            self._publishers.remove(publisher)
+            for event_handler in publisher.event_handlers:
+                self.__waitables.remove(event_handler)
+            try:
+                publisher.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_subscription(self, subscription: Subscription[Any]) -> bool:
+        """
+        Destroy a subscription created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if subscription in self._subscriptions:
+            self._subscriptions.remove(subscription)
+            for event_handler in subscription.event_handlers:
+                self.__waitables.remove(event_handler)
+            try:
+                subscription.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_client(self, client: Client[Any, Any]) -> bool:
+        """
+        Destroy a service client created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if client in self._clients:
+            self._clients.remove(client)
+            try:
+                client.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_service(self, service: Service[Any, Any]) -> bool:
+        """
+        Destroy a service server created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if service in self._services:
+            self._services.remove(service)
+            try:
+                service.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_timer(self, timer: Timer) -> bool:
+        """
+        Destroy a timer created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if timer in self._timers:
+            self._timers.remove(timer)
+            try:
+                timer.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_guard_condition(self, guard: GuardCondition) -> bool:
+        """
+        Destroy a guard condition created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        if guard in self._guards:
+            self._guards.remove(guard)
+            try:
+                guard.destroy()
+            except InvalidHandle:
+                return False
+            self._wake_executor()
+            return True
+        return False
+
+    def destroy_rate(self, rate: Rate) -> bool:
+        """
+        Destroy a Rate object created by the node.
+
+        :return: ``True`` if successful, ``False`` otherwise.
+        """
+        success = self.destroy_timer(rate._timer)
+        rate.destroy()
+        return success
+
+    def destroy_node(self) -> None:
+        """
+        Destroy the node.
+
+        Frees resources used by the node, including any entities created by the following methods:
+
+        * :func:`create_publisher`
+        * :func:`create_subscription`
+        * :func:`create_client`
+        * :func:`create_service`
+        * :func:`create_timer`
+        * :func:`create_guard_condition`
+
+        """
+        self._context.untrack_node(self)
+
+        # Drop extra reference to parameter event publisher.
+        # It will be destroyed with other publishers below.
+        self._parameter_event_publisher = None
+
+        # Destroy dependent items eagerly to work around a possible hang
+        # https://github.com/ros2/build_cop/issues/248
+        while self._publishers:
+            self.destroy_publisher(self._publishers[0])
+        while self._subscriptions:
+            self.destroy_subscription(self._subscriptions[0])
+        while self._clients:
+            self.destroy_client(self._clients[0])
+        while self._services:
+            self.destroy_service(self._services[0])
+        while self._timers:
+            self.destroy_timer(self._timers[0])
+        while self._guards:
+            self.destroy_guard_condition(self._guards[0])
+        self.handle.destroy_when_not_in_use()
+        self._wake_executor()
 
     def wait_for_node(
         self,

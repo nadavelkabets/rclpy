@@ -46,16 +46,16 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         assert self._loop is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
-    async def wait_for_service(self, timeout_sec: Optional[float] = None) -> None:
+    async def wait_for_service(self, *, check_interval: float = 0.1) -> None:
         """
         Wait for a service server to become ready.
 
-        :param timeout_sec: Seconds to wait. If ``None``, then wait forever.
-        :raises asyncio.TimeoutError: If the timeout expires before the service is ready.
+        To apply a timeout, wrap the call with ``async with asyncio.timeout()``.
+
+        :param check_interval: Seconds between checks. Defaults to 0.1.
         """
-        async with asyncio.timeout(timeout_sec):
-            while not self.service_is_ready():
-                await asyncio.sleep(0.1)
+        while not self.service_is_ready():
+            await asyncio.sleep(check_interval)
 
     def destroy(self) -> None:
         if self._destroyed:

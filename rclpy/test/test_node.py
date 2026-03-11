@@ -52,6 +52,7 @@ from rclpy.exceptions import ParameterNotDeclaredException
 from rclpy.exceptions import ParameterUninitializedException
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.impl.logging_severity import LoggingSeverity
+from rclpy.node import START_TYPE_DESCRIPTION_SERVICE_PARAM
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.qos import QoSDurabilityPolicy
@@ -60,7 +61,6 @@ from rclpy.qos import QoSLivelinessPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import QoSReliabilityPolicy
 from rclpy.time_source import USE_SIM_TIME_NAME
-from rclpy.type_description_service import START_TYPE_DESCRIPTION_SERVICE_PARAM
 from rclpy.utilities import get_rmw_implementation_identifier
 from test_msgs.msg import BasicTypes
 from test_msgs.srv import Empty

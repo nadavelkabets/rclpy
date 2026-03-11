@@ -77,7 +77,6 @@ class AsyncNode(BaseNode):
         self._entities: Set[AsyncEntity] = set()
         self._destroyed = asyncio.Event()
 
-        # TODO: Add TypeDescriptionService support for AsyncNode
         super().__init__(
             node_name=node_name,
             context=context,
@@ -127,6 +126,26 @@ class AsyncNode(BaseNode):
             entity.destroy()
         self._clock._destroy()
         self.handle.destroy_when_not_in_use()
+
+    async def wait_for_node(
+        self,
+        fully_qualified_node_name: str,
+        *,
+        check_interval: float = 0.1
+    ) -> None:
+        """
+        Wait until node name is present in the system.
+
+        To apply a timeout, wrap the call with ``async with asyncio.timeout()``.
+
+        :param fully_qualified_node_name: Fully qualified name of the node to wait for.
+        :param check_interval: Seconds between checks. Defaults to 0.1.
+        """
+        if not fully_qualified_node_name.startswith('/'):
+            fully_qualified_node_name = f'/{fully_qualified_node_name}'
+
+        while fully_qualified_node_name not in self.get_fully_qualified_node_names():
+            await asyncio.sleep(check_interval)
 
     async def run(self) -> None:
         """
@@ -197,6 +216,29 @@ class AsyncNode(BaseNode):
         self._entities.add(sub)
         return sub
 
+    def _register_service(
+        self,
+        service_impl: object,
+        srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
+        srv_name: str,
+        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
+        qos_profile: QoSProfile,
+        *,
+        concurrent: bool = False,
+    ) -> AsyncService[SrvRequestT, SrvResponseT]:
+        srv = AsyncService(
+            service_impl,
+            srv_type,
+            srv_name,
+            callback,
+            qos_profile,
+            on_destroy=self._entities.discard,
+            concurrent=concurrent,
+            tg=self._tg,
+        )
+        self._entities.add(srv)
+        return srv
+
     def create_service(
         self,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
@@ -208,22 +250,11 @@ class AsyncNode(BaseNode):
     ) -> AsyncService[SrvRequestT, SrvResponseT]:
         if self._destroyed.is_set():
             raise RuntimeError('Cannot create service on a destroyed node')
-
         service_handle = self._create_service_handle(
             srv_type, srv_name, qos_profile=qos_profile)
-
-        srv = AsyncService(
-            service_handle,
-            srv_type,
-            srv_name,
-            callback,
-            qos_profile,
-            on_destroy=self._entities.discard,
-            concurrent=concurrent,
-            tg=self._tg,
-        )
-        self._entities.add(srv)
-        return srv
+        return self._register_service(
+            service_handle, srv_type, srv_name, callback, qos_profile,
+            concurrent=concurrent)
 
     def create_client(
         self,
