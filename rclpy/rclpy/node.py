@@ -53,8 +53,8 @@ from rclpy.callback_groups import CallbackGroup
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.client import BaseClient, Client
-from rclpy.clock import Clock
-from rclpy.clock import ROSClock
+from rclpy.clock import BaseClock, Clock
+from rclpy.clock_type import ClockType
 from rclpy.constants import S_TO_NS
 from rclpy.context import Context
 from rclpy.endpoint_info import ServiceEndpointInfo, TopicEndpointInfo
@@ -168,7 +168,6 @@ class BaseNode(ABC):
         self._allow_undeclared_parameters = allow_undeclared_parameters
         self._parameter_overrides: Dict[str, Parameter[Any]] = {}
         self._descriptors: Dict[str, ParameterDescriptor] = {}
-        self._clock = ROSClock()
 
         namespace = namespace or ''
 
@@ -245,10 +244,6 @@ class BaseNode(ABC):
         """Get the namespace of the node."""
         with self.handle:
             return self.handle.get_namespace()
-
-    def get_clock(self) -> Clock:
-        """Get the clock used by the node."""
-        return self._clock
 
     def get_logger(self) -> RcutilsLogger:
         """Get the nodes logger."""
@@ -906,7 +901,7 @@ class BaseNode(ABC):
                     # Descriptors have already been applied by this point.
                     self._parameters[param.name] = param
 
-            parameter_event.stamp = self._clock.now().to_msg()
+            parameter_event.stamp = self.get_clock().now().to_msg()
             if self._parameter_event_publisher:
                 self._parameter_event_publisher.publish(parameter_event)
 
@@ -1545,6 +1540,11 @@ class BaseNode(ABC):
     ) -> BaseClient[SrvRequestT, SrvResponseT]:
         ...
 
+    @abstractmethod
+    def get_clock(self) -> BaseClock:
+        """Get the clock used by the node."""
+        ...
+
     def _setup(self) -> None:
         self._parameter_event_publisher: BasePublisher[ParameterEvent] = \
             self.create_publisher(ParameterEvent, '/parameter_events',
@@ -1562,7 +1562,7 @@ class BaseNode(ABC):
         # Parameter overrides and parameter event publisher need to be ready at this point
         # to be able to declare 'use_sim_time' if it was not declared yet.
         self._time_source = TimeSource(self)
-        self._time_source.attach_clock(self._clock)
+        self._time_source.attach_clock(self.get_clock())
 
         if self._start_parameter_services:
             self._parameter_service = ParameterService(self)
@@ -1650,11 +1650,16 @@ class Node(BaseNode):
         self._rate_group = ReentrantCallbackGroup()
         self.__executor_weakref: Optional[weakref.ReferenceType[Executor]] = None
 
+        self._clock = Clock(clock_type=ClockType.ROS_TIME)
         self._setup()
 
         self._type_description_service = TypeDescriptionService(self)
 
         self._context.track_node(self)
+
+    def get_clock(self) -> Clock:
+        """Get the clock used by the node."""
+        return self._clock
 
     @property
     def publishers(self) -> Iterator[Publisher[Any]]:
@@ -1977,10 +1982,10 @@ class Node(BaseNode):
         if callback_group is None:
             callback_group = self.default_callback_group
         if clock is None:
-            clock = self._clock
+            clock = self.get_clock()
         timer = Timer(
-            callback, callback_group, timer_period_nsec, clock, context=self.context,
-            autostart=autostart)
+            timer_period_nsec, clock, callback=callback,
+            callback_group=callback_group, context=self.context, autostart=autostart)
 
         callback_group.add_entity(timer)
         self._timers.append(timer)

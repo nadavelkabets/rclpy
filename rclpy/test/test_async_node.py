@@ -26,7 +26,9 @@ from rcl_interfaces.srv import SetParameters
 import rclpy
 from rclpy.exceptions import TimeSourceChangedError
 from rclpy.experimental import AsyncNode
+from rclpy.experimental import AsyncTimer
 from rclpy.parameter import Parameter
+from rclpy.timer import TimerInfo
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
@@ -114,7 +116,7 @@ async def test_sleep_wall_clock():
     async with AsyncNode('test_sleep_node') as node:
         try:
             async with asyncio.timeout(5):
-                await node.sleep(0.1)
+                await node.get_clock().sleep(0.1)
         finally:
             node.destroy_node()
 
@@ -127,7 +129,7 @@ async def test_sleep_cancelled_on_close():
         loop.call_soon(node.destroy_node)
         with pytest.raises(asyncio.CancelledError):
             async with asyncio.timeout(5):
-                await node.sleep(999)
+                await node.get_clock().sleep(999)
 
 
 @pytest.mark.asyncio
@@ -135,16 +137,14 @@ async def test_sleep_raises_on_clock_change():
     """Wall clock sleep raises TimeSourceChangedError when sim time activates."""
     async with AsyncNode('test_sleep_clock_change_node') as node:
         try:
-            sleep_task = asyncio.ensure_future(node.sleep(999))
-            await asyncio.sleep(0.05)  # let sleep start
-
             # Activate sim time — triggers ROS_TIME_ACTIVATED jump callback
-            node.set_parameters([Parameter(
+            loop = asyncio.get_running_loop()
+            loop.call_soon(node.set_parameters, [Parameter(
                 'use_sim_time', Parameter.Type.BOOL, True)])
 
             async with asyncio.timeout(5):
                 with pytest.raises(TimeSourceChangedError):
-                    await sleep_task
+                    await node.get_clock().sleep(999)
         finally:
             node.destroy_node()
 
@@ -373,3 +373,180 @@ async def test_parameter_service_over_dds():
         finally:
             client_node.destroy_node()
             srv_node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_fires():
+    """Timer callback fires at least once within timeout."""
+    count = 0
+    fired = asyncio.Event()
+
+    async def callback():
+        nonlocal count
+        count += 1
+        fired.set()
+
+    async with AsyncNode('test_timer_fires_node') as node:
+        node.create_timer(0.05, callback)
+        try:
+            async with asyncio.timeout(5):
+                await fired.wait()
+            assert count >= 1
+        finally:
+            node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_fires_multiple():
+    """Timer fires multiple times over a short period."""
+    count = 0
+    enough = asyncio.Event()
+
+    async def callback():
+        nonlocal count
+        count += 1
+        if count >= 3:
+            enough.set()
+
+    async with AsyncNode('test_timer_multi_node') as node:
+        node.create_timer(0.05, callback)
+        try:
+            async with asyncio.timeout(5):
+                await enough.wait()
+            assert count >= 3
+        finally:
+            node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_cancel_and_reset():
+    """Cancelled timer stops firing; reset resumes it."""
+    count = 0
+    fired = asyncio.Event()
+
+    async def callback():
+        nonlocal count
+        count += 1
+        fired.set()
+
+    async with AsyncNode('test_timer_cancel_reset_node') as node:
+        timer = node.create_timer(0.05, callback)
+        try:
+            # Wait for first fire
+            async with asyncio.timeout(5):
+                await fired.wait()
+            assert count >= 1
+
+            # Cancel and verify no more fires
+            timer.cancel()
+            count_at_cancel = count
+            await asyncio.sleep(0.15)
+            assert count == count_at_cancel
+
+            # Reset and verify it fires again
+            fired.clear()
+            timer.reset()
+            async with asyncio.timeout(5):
+                await fired.wait()
+            assert count > count_at_cancel
+        finally:
+            node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_destroy():
+    """Destroying a timer stops it."""
+    count = 0
+    fired = asyncio.Event()
+
+    async def callback():
+        nonlocal count
+        count += 1
+        fired.set()
+
+    async with AsyncNode('test_timer_destroy_node') as node:
+        timer = node.create_timer(0.05, callback)
+        try:
+            async with asyncio.timeout(5):
+                await fired.wait()
+
+            timer.destroy()
+            count_at_destroy = count
+            await asyncio.sleep(0.15)
+            assert count == count_at_destroy
+        finally:
+            node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_callback_exception():
+    """Exception in timer callback propagates as ExceptionGroup."""
+    async def bad_callback():
+        raise ValueError('timer boom')
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with asyncio.timeout(5), AsyncNode('test_timer_exc_node') as node:
+            node.create_timer(0.05, bad_callback)
+
+    assert exc_info.value.subgroup(ValueError)
+
+
+@pytest.mark.asyncio
+async def test_timer_create_before_aenter_raises():
+    """Creating a timer before entering async context raises RuntimeError."""
+    node = AsyncNode('test_timer_no_ctx_node')
+
+    async def noop():
+        pass
+
+    with pytest.raises(RuntimeError):
+        node.create_timer(0.1, noop)
+
+    node.handle.destroy_when_not_in_use()
+
+
+@pytest.mark.asyncio
+async def test_timer_introspection():
+    """Timer exposes period and cancel state via BaseTimer."""
+    fired = asyncio.Event()
+
+    async def callback():
+        fired.set()
+
+    async with AsyncNode('test_timer_introspect_node') as node:
+        timer = node.create_timer(0.1, callback)
+        try:
+            assert isinstance(timer, AsyncTimer)
+            assert timer.timer_period_ns == 0.1 * 1e9
+            assert not timer.is_canceled()
+
+            timer.cancel()
+            assert timer.is_canceled()
+
+            timer.reset()
+            assert not timer.is_canceled()
+        finally:
+            node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_timer_callback_with_info():
+    """Timer callback receives TimerInfo when it accepts a parameter."""
+    received_info = []
+    fired = asyncio.Event()
+
+    async def callback(info: TimerInfo):
+        received_info.append(info)
+        fired.set()
+
+    async with AsyncNode('test_timer_info_node') as node:
+        node.create_timer(0.05, callback)
+        try:
+            async with asyncio.timeout(5):
+                await fired.wait()
+            assert len(received_info) >= 1
+            assert isinstance(received_info[0], TimerInfo)
+            assert received_info[0].expected_call_time is not None
+            assert received_info[0].actual_call_time is not None
+        finally:
+            node.destroy_node()

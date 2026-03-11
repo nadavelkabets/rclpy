@@ -15,7 +15,7 @@
 from typing import List, Set, TYPE_CHECKING
 
 from rcl_interfaces.msg import SetParametersResult
-from rclpy.clock import ROSClock
+from rclpy.clock import BaseClock
 from rclpy.clock_type import ClockType
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile
@@ -33,7 +33,7 @@ USE_SIM_TIME_NAME = 'use_sim_time'
 class TimeSource:
 
     def __init__(self, node: 'BaseNode'):
-        self._associated_clocks: Set[ROSClock] = set()
+        self._associated_clocks: Set[BaseClock] = set()
         # Zero time is a special value that means time is uninitialzied
         self._last_time_set = Time(clock_type=ClockType.ROS_TIME)
         self._ros_time_is_active = False
@@ -74,8 +74,8 @@ class TimeSource:
         for clock in self._associated_clocks:
             clock._set_ros_time_is_active(enabled)
 
-    def attach_clock(self, clock: ROSClock) -> None:
-        if not isinstance(clock, ROSClock):
+    def attach_clock(self, clock: BaseClock) -> None:
+        if clock.clock_type != ClockType.ROS_TIME:
             raise ValueError('Only clocks with type ROS_TIME can be attached.')
 
         clock.set_ros_time_override(self._last_time_set)

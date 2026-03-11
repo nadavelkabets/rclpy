@@ -2,21 +2,22 @@ import asyncio
 from types import TracebackType
 from typing import Any, Awaitable, Callable, Optional, Set, Type, Union
 
-from rclpy.clock import ClockChange, JumpThreshold, TimeJump
+from rclpy.clock_type import ClockType
 from rclpy.context import Context
-from rclpy.duration import Duration
-from rclpy.exceptions import TimeSourceChangedError
 from rclpy.node import BaseNode
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, qos_profile_rosout_default, qos_profile_services_default
 from rclpy.subscription import AsyncGenericSubscriptionCallback
 from rclpy.subscription_content_filter_options import ContentFilterOptions
+from rclpy.timer import AsyncTimerCallbackType
 from rclpy.type_support import MsgT, Srv, SrvRequestT, SrvResponseT
 
 from .async_client import AsyncClient
+from .async_clock import AsyncClock
 from .async_publisher import AsyncPublisher
 from .async_service import AsyncService
 from .async_subscription import AsyncSubscription
+from .async_timer import AsyncTimer
 
 
 class AsyncNode(BaseNode):
@@ -59,12 +60,13 @@ class AsyncNode(BaseNode):
             automatically_declare_parameters_from_overrides=automatically_declare_parameters_from_overrides,
             enable_logger_service=enable_logger_service,
         )
+        self._clock = AsyncClock(clock_type=ClockType.ROS_TIME)
         self._tg: Optional[asyncio.TaskGroup] = None
         self._publishers: Set[AsyncPublisher] = set()
         self._subscriptions: Set[AsyncSubscription] = set()
         self._services: Set[AsyncService] = set()
         self._clients: Set[AsyncClient] = set()
-        self._pending_sleeps: Set[asyncio.Future] = set()
+        self._timers: Set[AsyncTimer] = set()
         self._destroyed = False
         # Register with context for rclpy.shutdown() safety net
         self._context.track_node(self)
@@ -88,13 +90,15 @@ class AsyncNode(BaseNode):
             self._tg = None
             self.destroy_node()
 
+    def get_clock(self) -> AsyncClock:
+        """Get the async clock used by the node."""
+        return self._clock
+
     def destroy_node(self) -> None:
         if self._destroyed:
             return
         self._destroyed = True
         self._context.untrack_node(self)
-        for future in self._pending_sleeps:
-            future.cancel()
         for pub in self._publishers:
             pub.destroy()
         for sub in self._subscriptions:
@@ -103,64 +107,10 @@ class AsyncNode(BaseNode):
             srv.destroy()
         for cli in self._clients:
             cli.destroy()
+        for tmr in self._timers:
+            tmr.destroy()
+        self._clock._destroy()
         self.handle.destroy_when_not_in_use()
-
-    async def sleep(self, duration_sec: float) -> None:
-        """
-        Sleep for a duration respecting sim time.
-
-        Cancelled on destroy_node(). Raises TimeSourceChangedError if ROS time
-        is activated or deactivated during the sleep.
-        """
-        if self._tg is None:
-            raise RuntimeError("Cannot sleep before entering 'async with AsyncNode():'")
-        if self._destroyed:
-            raise RuntimeError("Cannot sleep on a destroyed node")
-        if duration_sec <= 0:
-            return
-
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[None] = loop.create_future()
-        timer_handle = None
-        target = None
-
-        def _resolve() -> None:
-            if not future.done():
-                future.set_result(None)
-
-        def _reject() -> None:
-            if not future.done():
-                future.set_exception(TimeSourceChangedError())
-
-        if self._clock.ros_time_is_active:
-            target = self._clock.now() + Duration(nanoseconds=int(duration_sec * 1e9))
-        else:
-            timer_handle = loop.call_later(duration_sec, _resolve)
-
-        def _on_jump(time_jump: TimeJump) -> None:
-            if time_jump.clock_change in (
-                ClockChange.ROS_TIME_ACTIVATED,
-                ClockChange.ROS_TIME_DEACTIVATED,
-            ):
-                _reject()
-            elif target is not None and self._clock.now() >= target:
-                _resolve()
-
-        threshold = JumpThreshold(
-            min_forward=Duration(nanoseconds=1),
-            min_backward=None,
-            on_clock_change=True,
-        )
-        jump_handle = self._clock.create_jump_callback(
-            threshold, post_callback=_on_jump)
-        self._pending_sleeps.add(future)
-        try:
-            await future
-        finally:
-            self._pending_sleeps.discard(future)
-            jump_handle.unregister()
-            if timer_handle is not None:
-                timer_handle.cancel()
 
     async def _run_entity(self, entity: Any, entity_set: set) -> None:
         try:
@@ -261,3 +211,19 @@ class AsyncNode(BaseNode):
         self._clients.add(client)
         client._task = self._tg.create_task(self._run_entity(client, self._clients))
         return client
+
+    def create_timer(
+        self,
+        timer_period_sec: float,
+        callback: AsyncTimerCallbackType,
+    ) -> AsyncTimer:
+        if self._tg is None:
+            raise RuntimeError("Cannot create timer before entering 'async with AsyncNode():'")
+        if self._destroyed:
+            raise RuntimeError("Cannot create timer on a destroyed node")
+
+        timer_period_ns = int(float(timer_period_sec) * 1e9)
+        timer = AsyncTimer(timer_period_ns, self._clock, self.context, callback)
+        self._timers.add(timer)
+        timer._task = self._tg.create_task(self._run_entity(timer, self._timers))
+        return timer
