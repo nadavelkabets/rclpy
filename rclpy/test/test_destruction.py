@@ -110,17 +110,17 @@ def test_destroy_entities() -> None:
             assert 3 == len(tuple(node.publishers))
             sub1 = node.create_subscription(
                 BasicTypes, 'sub1_topic', lambda msg: None, 1)
-            assert 2 == len(tuple(node.subscriptions))
+            assert 1 == len(tuple(node.subscriptions))
             sub2 = node.create_subscription(
                 BasicTypes, 'sub2_topic', lambda msg: None, 1)
             sub2  # noqa
-            assert 3 == len(tuple(node.subscriptions))
+            assert 2 == len(tuple(node.subscriptions))
 
             assert node.destroy_publisher(pub1)
             assert 2 == len(tuple(node.publishers))
 
             assert node.destroy_subscription(sub1)
-            assert 2 == len(tuple(node.subscriptions))
+            assert 1 == len(tuple(node.subscriptions))
         finally:
             node.destroy_node()
         assert 0 == len(tuple(node.timers))
