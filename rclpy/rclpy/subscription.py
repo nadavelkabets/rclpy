@@ -82,12 +82,16 @@ class BaseSubscription(Generic[MsgT]):
          topic: str,
          qos_profile: QoSProfile,
          raw: bool,
+         *,
+         on_destroy: Optional[Callable[['BaseSubscription[MsgT]'], None]] = None,
     ) -> None:
         self.__subscription = subscription_impl
         self.msg_type = msg_type
         self.topic = topic
         self.qos_profile = qos_profile
         self.raw = raw
+        self._destroyed = False
+        self._on_destroy = on_destroy
 
     @property
     def handle(self) -> '_rclpy.Subscription[MsgT]':
@@ -155,7 +159,16 @@ class BaseSubscription(Generic[MsgT]):
             return self.__subscription.get_content_filter()
 
     def destroy(self) -> None:
-        """Destroy the underlying subscription handle."""
+        """Destroy the subscription, notifying the owning node and releasing the handle."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
+        self._destroy()
+
+    def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
 
@@ -210,6 +223,8 @@ class Subscription(BaseSubscription[MsgT]):
          qos_profile: QoSProfile,
          raw: bool,
          event_callbacks: SubscriptionEventCallbacks,
+         *,
+         on_destroy: Optional[Callable[['Subscription[MsgT]'], None]] = None,
     ) -> None:
         """
         Create a container for a ROS subscription.
@@ -229,7 +244,8 @@ class Subscription(BaseSubscription[MsgT]):
         :param raw: If ``True``, then received messages will be stored in raw binary
             representation.
         """
-        super().__init__(subscription_impl, msg_type, topic, qos_profile, raw)
+        super().__init__(subscription_impl, msg_type, topic, qos_profile, raw,
+                         on_destroy=on_destroy)
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
@@ -247,16 +263,10 @@ class Subscription(BaseSubscription[MsgT]):
         self._callback = value
         self._callback_type = self._detect_callback_type(value)
 
-    def destroy(self) -> None:
-        """
-        Destroy a container for a ROS subscription.
-
-        .. warning:: Users should not destroy a subscription with this method, instead they
-           should call :meth:`.Node.destroy_subscription`.
-        """
+    def _destroy(self) -> None:
         for handler in self.event_handlers:
             handler.destroy()
-        super().destroy()
+        super()._destroy()
 
     def __enter__(self) -> 'Subscription[MsgT]':
         return self

@@ -39,13 +39,12 @@ class AsyncTimer(BaseTimer):
     ) -> None:
         if not inspect.iscoroutinefunction(callback):
             raise TypeError('AsyncTimer callback must be an async function')
-        super().__init__(timer_period_ns, clock, context=context)
+        super().__init__(timer_period_ns, clock, context=context,
+                         on_destroy=on_destroy)
         self._callback = callback
         self._pass_info = self._detect_wants_info(callback)
-        self._on_destroy: Optional[Callable[['AsyncTimer'], None]] = on_destroy
         self._task: Optional[asyncio.Task] = None
         self._reset_event = asyncio.Event()
-        self._destroyed = False
         self._sleep_waiter: Optional[asyncio.Future] = None
         self._jump_handle: Optional[JumpHandle] = None
         if tg is not None:
@@ -67,19 +66,13 @@ class AsyncTimer(BaseTimer):
             'Timer callback must accept zero arguments '
             'or one argument (TimerInfo)')
 
-    def destroy(self) -> None:
-        if self._destroyed:
-            return
-        self._destroyed = True
-        if self._on_destroy is not None:
-            self._on_destroy(self)
-            self._on_destroy = None
+    def _destroy(self) -> None:
         if self._task is not None:
             self._task.cancel()
         if self._jump_handle is not None:
             self._jump_handle.unregister()
         self.handle.clear_on_reset_callback()
-        super().destroy()
+        super()._destroy()
 
     def cancel(self) -> None:
         super().cancel()

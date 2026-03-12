@@ -37,11 +37,10 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
     ) -> None:
         if not inspect.iscoroutinefunction(callback):
             raise TypeError('AsyncService callback must be an async function')
-        super().__init__(service_impl, srv_type, srv_name, qos_profile)
+        super().__init__(service_impl, srv_type, srv_name, qos_profile,
+                         on_destroy=on_destroy)
         self.callback = callback
-        self._on_destroy: Optional[Callable[['AsyncService'], None]] = on_destroy
         self._concurrent = concurrent
-        self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
@@ -52,17 +51,11 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         assert self._loop is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
 
-    def destroy(self) -> None:
-        if self._destroyed:
-            return
-        self._destroyed = True
-        if self._on_destroy is not None:
-            self._on_destroy(self)
-            self._on_destroy = None
+    def _destroy(self) -> None:
         if self._task is not None:
             self._task.cancel()
         self.handle.clear_on_new_request_callback()
-        super().destroy()
+        super()._destroy()
 
     async def _handle_request(
         self,

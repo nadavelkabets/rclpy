@@ -15,6 +15,7 @@
 import threading
 import time
 from types import TracebackType
+from typing import Callable
 from typing import Dict
 from typing import Generic
 from typing import Optional
@@ -45,11 +46,15 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
         qos_profile: QoSProfile,
+        *,
+        on_destroy: Optional[Callable[['BaseClient[SrvRequestT, SrvResponseT]'], None]] = None,
     ) -> None:
         self.__client = client_impl
         self.srv_type = srv_type
         self.srv_name = srv_name
         self.qos_profile = qos_profile
+        self._destroyed = False
+        self._on_destroy = on_destroy
 
     @property
     def handle(self) -> '_rclpy.Client[SrvRequestT, SrvResponseT]':
@@ -93,7 +98,16 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
             return self.__client.get_logger_name()
 
     def destroy(self) -> None:
-        """Destroy the underlying client handle."""
+        """Destroy the client, notifying the owning node and releasing the handle."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
+        self._destroy()
+
+    def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
 
@@ -105,7 +119,9 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
         qos_profile: QoSProfile,
-        callback_group: CallbackGroup
+        callback_group: CallbackGroup,
+        *,
+        on_destroy: Optional[Callable[['Client[SrvRequestT, SrvResponseT]'], None]] = None,
     ) -> None:
         """
         Create a container for a ROS service client.
@@ -121,7 +137,8 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         :param callback_group: The callback group for the service client. If ``None``, then the
             nodes default callback group is used.
         """
-        super().__init__(client_impl, srv_type, srv_name, qos_profile)
+        super().__init__(client_impl, srv_type, srv_name, qos_profile,
+                         on_destroy=on_destroy)
         self.context = context
         # Key is a sequence number, value is an instance of a Future
         self._pending_requests: Dict[int, Future[SrvResponseT]] = {}
@@ -184,7 +201,10 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         :raises: TypeError if the type of the passed request isn't an instance
           of the Request type of the provided service when the client was
           constructed.
+        :raises RuntimeError: If the client has been destroyed.
         """
+        if self._destroyed:
+            raise RuntimeError('Calling on a destroyed client is forbidden')
         if not isinstance(request, self.srv_type.Request):
             raise TypeError()
 
@@ -246,15 +266,6 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
             timeout_sec -= sleep_time
 
         return self.service_is_ready()
-
-    def destroy(self) -> None:
-        """
-        Destroy a container for a ROS service client.
-
-        .. warning:: Users should not destroy a service client with this destructor, instead they
-           should call :meth:`.Node.destroy_client`.
-        """
-        super().destroy()
 
     def __enter__(self) -> 'Client[SrvRequestT, SrvResponseT]':
         return self

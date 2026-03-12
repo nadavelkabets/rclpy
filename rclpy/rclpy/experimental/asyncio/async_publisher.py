@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional, Type, Union
+from typing import Callable, Type
 
 from rclpy.publisher import BasePublisher
 from rclpy.qos import QoSProfile
@@ -30,20 +30,5 @@ class AsyncPublisher(BasePublisher[MsgT]):
         qos_profile: QoSProfile,
         on_destroy: Callable[['AsyncPublisher'], None],
     ) -> None:
-        super().__init__(publisher_impl, msg_type, topic, qos_profile)
-        self._on_destroy: Optional[Callable[['AsyncPublisher'], None]] = on_destroy
-        self._destroyed = False
-
-    def publish(self, msg: Union[MsgT, bytes]) -> None:
-        if self._destroyed:
-            raise RuntimeError('Publishing on a destroyed publisher is forbidden')
-        super().publish(msg)
-
-    def destroy(self) -> None:
-        if self._destroyed:
-            return
-        self._destroyed = True
-        if self._on_destroy is not None:
-            self._on_destroy(self)
-            self._on_destroy = None
-        super().destroy()
+        super().__init__(publisher_impl, msg_type, topic, qos_profile,
+                         on_destroy=on_destroy)

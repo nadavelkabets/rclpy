@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Set, TYPE_CHECKING
+from typing import List, Optional, Set, TYPE_CHECKING
+import weakref
 
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.clock import BaseClock
@@ -25,6 +26,7 @@ import rosgraph_msgs.msg
 
 if TYPE_CHECKING:
     from rclpy.node import BaseNode
+    from rclpy.subscription import BaseSubscription
 
 CLOCK_TOPIC = '/clock'
 USE_SIM_TIME_NAME = 'use_sim_time'
@@ -32,35 +34,15 @@ USE_SIM_TIME_NAME = 'use_sim_time'
 
 class TimeSource:
 
-    def __init__(self, node: 'BaseNode'):
+    def __init__(self, *, node: Optional['BaseNode'] = None):
+        self._clock_sub: Optional['BaseSubscription'] = None
+        self._node_weak_ref: Optional[weakref.ReferenceType['BaseNode']] = None
         self._associated_clocks: Set[BaseClock] = set()
-        # Zero time is a special value that means time is uninitialzied
+        # Zero time is a special value that means time is uninitialized
         self._last_time_set = Time(clock_type=ClockType.ROS_TIME)
         self._ros_time_is_active = False
-        self._logger = node.get_logger()
-
-        if not node.has_parameter(USE_SIM_TIME_NAME):
-            node.declare_parameter(USE_SIM_TIME_NAME, False)
-
-        use_sim_time_param = node.get_parameter(USE_SIM_TIME_NAME)
-        if use_sim_time_param.type_ != Parameter.Type.NOT_SET:
-            if use_sim_time_param.type_ == Parameter.Type.BOOL:
-                self.ros_time_is_active = use_sim_time_param.value
-            else:
-                self._logger.error(
-                    "Invalid type for parameter '{}' {!r} should be bool"
-                    .format(USE_SIM_TIME_NAME, use_sim_time_param.type_))
-        else:
-            self._logger.debug(
-                "'{}' parameter not set, using wall time by default"
-                .format(USE_SIM_TIME_NAME))
-
-        node.add_on_set_parameters_callback(self._on_parameter_event)
-        node.create_subscription(
-            rosgraph_msgs.msg.Clock,
-            CLOCK_TOPIC,
-            self.clock_callback,
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+        if node is not None:
+            self.attach_node(node)
 
     @property
     def ros_time_is_active(self) -> bool:
@@ -73,6 +55,57 @@ class TimeSource:
         self._ros_time_is_active = enabled
         for clock in self._associated_clocks:
             clock._set_ros_time_is_active(enabled)
+        if enabled:
+            self._subscribe_to_clock_topic()
+        else:
+            if self._clock_sub is not None:
+                self._clock_sub.destroy()
+                self._clock_sub = None
+
+    def _subscribe_to_clock_topic(self) -> None:
+        if self._clock_sub is None:
+            node = self._get_node()
+            if node is not None:
+                self._clock_sub = node.create_subscription(
+                    rosgraph_msgs.msg.Clock,
+                    CLOCK_TOPIC,
+                    self.clock_callback,
+                    QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+                )
+
+    def attach_node(self, node: 'BaseNode') -> None:
+        from rclpy.node import BaseNode
+        if not isinstance(node, BaseNode):
+            raise TypeError('Node must be of type rclpy.node.BaseNode')
+        # Remove an existing node.
+        if self._node_weak_ref is not None:
+            self.detach_node()
+        self._node_weak_ref = weakref.ref(node)
+
+        if not node.has_parameter(USE_SIM_TIME_NAME):
+            node.declare_parameter(USE_SIM_TIME_NAME, False)
+
+        use_sim_time_param = node.get_parameter(USE_SIM_TIME_NAME)
+        if use_sim_time_param.type_ != Parameter.Type.NOT_SET:
+            if use_sim_time_param.type_ == Parameter.Type.BOOL:
+                self.ros_time_is_active = use_sim_time_param.value
+            else:
+                node.get_logger().error(
+                    "Invalid type for parameter '{}' {!r} should be bool"
+                    .format(USE_SIM_TIME_NAME, use_sim_time_param.type_))
+        else:
+            node.get_logger().debug(
+                "'{}' parameter not set, using wall time by default"
+                .format(USE_SIM_TIME_NAME))
+
+        node.add_on_set_parameters_callback(self._on_parameter_event)
+
+    def detach_node(self) -> None:
+        # Remove the subscription to the clock topic.
+        if self._clock_sub is not None:
+            self._clock_sub.destroy()
+        self._clock_sub = None
+        self._node_weak_ref = None
 
     def attach_clock(self, clock: BaseClock) -> None:
         if clock.clock_type != ClockType.ROS_TIME:
@@ -83,8 +116,6 @@ class TimeSource:
         self._associated_clocks.add(clock)
 
     async def clock_callback(self, msg: rosgraph_msgs.msg.Clock) -> None:
-        if not self._ros_time_is_active:
-            return
         # Cache the last message in case a new clock is attached.
         time_from_msg = Time.from_msg(msg.clock)
         self._last_time_set = time_from_msg
@@ -103,7 +134,15 @@ class TimeSource:
                     successful = False
                     reason = '{} parameter set to something besides a bool'.format(
                         USE_SIM_TIME_NAME)
-                    self._logger.error(reason)
+
+                    node = self._get_node()
+                    if node:
+                        node.get_logger().error(reason)
                 break
 
         return SetParametersResult(successful=successful, reason=reason)
+
+    def _get_node(self) -> Optional['BaseNode']:
+        if self._node_weak_ref is not None:
+            return self._node_weak_ref()
+        return None

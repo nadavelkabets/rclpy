@@ -84,9 +84,12 @@ class BaseTimer:
         *,
         context: Optional[Context] = None,
         autostart: bool = True,
+        on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
     ) -> None:
         self._context = get_default_context() if context is None else context
         self._clock = clock
+        self._destroyed = False
+        self._on_destroy = on_destroy
         if self._context.handle is None:
             raise RuntimeError('Context must be initialized before creating a Timer.')
         with self._clock.handle, self._context.handle:
@@ -98,12 +101,16 @@ class BaseTimer:
         return self.__timer
 
     def destroy(self) -> None:
-        """
-        Destroy a container for a ROS timer.
+        """Destroy the timer, notifying the owning node and releasing the handle."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
+        self._destroy()
 
-        .. warning:: Users should not destroy a timer with this method, instead they should
-           call :meth:`.Node.destroy_timer`.
-        """
+    def _destroy(self) -> None:
         self.__timer.destroy_when_not_in_use()
 
     @property
@@ -151,7 +158,8 @@ class Timer(BaseTimer):
         callback: Optional[TimerCallbackType] = None,
         callback_group: Optional[CallbackGroup] = None,
         context: Optional[Context] = None,
-        autostart: bool = True
+        autostart: bool = True,
+        on_destroy: Optional[Callable[['Timer'], None]] = None,
     ) -> None:
         """
         Create a Timer.
@@ -173,7 +181,8 @@ class Timer(BaseTimer):
         :param autostart: Whether to automatically start the timer after creation; defaults to
             ``True``.
         """
-        super().__init__(timer_period_ns, clock, context=context, autostart=autostart)
+        super().__init__(timer_period_ns, clock, context=context, autostart=autostart,
+                         on_destroy=on_destroy)
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor

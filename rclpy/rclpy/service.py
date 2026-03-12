@@ -41,12 +41,16 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
         service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]',
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        qos_profile: QoSProfile
+        qos_profile: QoSProfile,
+        *,
+        on_destroy: Optional[Callable[['BaseService[SrvRequestT, SrvResponseT]'], None]] = None,
     ) -> None:
         self.__service = service_impl
         self.srv_type = srv_type
         self.srv_name = srv_name
         self.qos_profile = qos_profile
+        self._destroyed = False
+        self._on_destroy = on_destroy
 
     @property
     def handle(self) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
@@ -94,7 +98,16 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
             return self.__service.get_logger_name()
 
     def destroy(self) -> None:
-        """Destroy the underlying service handle."""
+        """Destroy the service, notifying the owning node and releasing the handle."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
+        self._destroy()
+
+    def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
 
@@ -106,7 +119,9 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
         srv_name: str,
         callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
         callback_group: CallbackGroup,
-        qos_profile: QoSProfile
+        qos_profile: QoSProfile,
+        *,
+        on_destroy: Optional[Callable[['Service[SrvRequestT, SrvResponseT]'], None]] = None,
     ) -> None:
         """
         Create a container for a ROS service server.
@@ -123,7 +138,8 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
             nodes default callback group is used.
         :param qos_profile: The quality of service profile to apply the service server.
         """
-        super().__init__(service_impl, srv_type, srv_name, qos_profile)
+        super().__init__(service_impl, srv_type, srv_name, qos_profile,
+                         on_destroy=on_destroy)
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
@@ -141,15 +157,6 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
           constructed.
         """
         self._send_response(response, header)
-
-    def destroy(self) -> None:
-        """
-        Destroy a container for a ROS service server.
-
-        .. warning:: Users should not destroy a service server with this destructor, instead they
-           should call :meth:`.Node.destroy_service`.
-        """
-        super().destroy()
 
     def __enter__(self) -> 'Service[SrvRequestT, SrvResponseT]':
         return self

@@ -697,3 +697,282 @@ async def test_wait_for_node_async_timeout():
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.3):
                 await node.wait_for_node('nonexistent_node')
+
+
+@pytest.mark.asyncio
+async def test_create_publisher_on_destroyed_node():
+    """create_publisher raises RuntimeError on a destroyed node."""
+    node = AsyncNode('test_destroyed_pub_node')
+    node.destroy_node()
+    with pytest.raises(RuntimeError):
+        node.create_publisher(Strings, '/topic', TEST_QOS)
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_on_destroyed_node():
+    """create_subscription raises RuntimeError on a destroyed node."""
+    node = AsyncNode('test_destroyed_sub_node')
+    node.destroy_node()
+
+    async def callback(msg):
+        pass
+
+    with pytest.raises(RuntimeError):
+        node.create_subscription(Strings, '/topic', callback, TEST_QOS)
+
+
+@pytest.mark.asyncio
+async def test_create_client_on_destroyed_node():
+    """create_client raises RuntimeError on a destroyed node."""
+    node = AsyncNode('test_destroyed_client_node')
+    node.destroy_node()
+    with pytest.raises(RuntimeError):
+        node.create_client(BasicTypesSrv, '/service')
+
+
+@pytest.mark.asyncio
+async def test_create_timer_on_destroyed_node():
+    """create_timer raises RuntimeError on a destroyed node."""
+    node = AsyncNode('test_destroyed_timer_node')
+    node.destroy_node()
+
+    async def callback():
+        pass
+
+    with pytest.raises(RuntimeError):
+        node.create_timer(1.0, callback)
+
+
+@pytest.mark.asyncio
+async def test_sync_callback_rejected():
+    """Non-async callbacks are rejected by subscription, service, and timer."""
+    async with AsyncNode('test_sync_cb_node') as node:
+        def sync_sub_cb(msg):
+            pass
+
+        with pytest.raises(TypeError):
+            node.create_subscription(Strings, '/topic', sync_sub_cb, TEST_QOS)
+
+        def sync_srv_cb(request, response):
+            return response
+
+        with pytest.raises(TypeError):
+            node.create_service(BasicTypesSrv, '/service', sync_srv_cb)
+
+        def sync_timer_cb():
+            pass
+
+        with pytest.raises(TypeError):
+            node.create_timer(1.0, sync_timer_cb)
+
+
+@pytest.mark.asyncio
+async def test_destroy_node_idempotent():
+    """Calling destroy_node() twice does not raise."""
+    node = AsyncNode('test_double_destroy_node')
+    node.destroy_node()
+    node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_entity_destroy_idempotent():
+    """Calling destroy() twice on an entity does not raise."""
+    async with AsyncNode('test_entity_double_destroy_node') as node:
+        pub = node.create_publisher(Strings, '/topic', TEST_QOS)
+
+        pub.destroy()
+        pub.destroy()
+
+        async def callback(msg):
+            pass
+
+        sub = node.create_subscription(Strings, '/topic', callback, TEST_QOS)
+
+        sub.destroy()
+        sub.destroy()
+
+
+@pytest.mark.asyncio
+async def test_client_call_on_destroyed_client():
+    """Calling a destroyed client raises RuntimeError."""
+    async with AsyncNode('test_destroyed_call_node') as node:
+        client = node.create_client(BasicTypesSrv, '/some_service')
+        client.destroy()
+        with pytest.raises(RuntimeError):
+            await client.call(BasicTypesSrv.Request())
+
+
+@pytest.mark.asyncio
+async def test_client_concurrent_calls():
+    """Multiple concurrent calls are correctly demuxed by sequence number."""
+    NUM_CALLS = 3
+    barrier = asyncio.Barrier(NUM_CALLS)
+
+    async def handler(request, response):
+        await barrier.wait()
+        return response
+
+    async with (
+        AsyncNode('test_conc_call_srv_node') as srv_node,
+        AsyncNode('test_conc_call_client_node') as client_node,
+    ):
+        srv_node.create_service(
+            BasicTypesSrv, '/test_conc_call_svc', handler, concurrent=True)
+        client = client_node.create_client(
+            BasicTypesSrv, '/test_conc_call_svc')
+
+        async with asyncio.timeout(5):
+            await client.wait_for_service()
+            async with asyncio.TaskGroup() as tg:
+                for _ in range(NUM_CALLS):
+                    tg.create_task(client.call(BasicTypesSrv.Request()))
+
+
+@pytest.mark.asyncio
+async def test_publish_on_destroyed_publisher():
+    """Publishing on a destroyed publisher raises RuntimeError."""
+    async with AsyncNode('test_pub_destroyed_node') as node:
+        pub = node.create_publisher(Strings, '/topic', TEST_QOS)
+        pub.destroy()
+        with pytest.raises(RuntimeError):
+            pub.publish(Strings(string_value='nope'))
+
+
+@pytest.mark.asyncio
+async def test_subscription_callback_with_message_info():
+    """Subscription callback receives MessageInfo when it accepts two params."""
+    received = asyncio.Event()
+    received_info = []
+
+    async def callback(msg, info):
+        received_info.append(info)
+        received.set()
+
+    async with AsyncNode('test_sub_info_node') as node:
+        pub = node.create_publisher(Strings, '/test_sub_info_topic', TEST_QOS)
+        node.create_subscription(
+            Strings, '/test_sub_info_topic', callback, TEST_QOS)
+
+        pub.publish(Strings(string_value='hello'))
+
+        async with asyncio.timeout(5):
+            await received.wait()
+
+        assert len(received_info) == 1
+        assert 'source_timestamp' in received_info[0]
+        assert 'received_timestamp' in received_info[0]
+
+
+@pytest.mark.asyncio
+async def test_service_concurrent_dispatch():
+    """Concurrent service dispatch handles requests in parallel."""
+    NUM_REQUESTS = 3
+    barrier = asyncio.Barrier(NUM_REQUESTS)
+
+    async def handler(request, response):
+        await barrier.wait()
+        response.bool_value = True
+        return response
+
+    async with (
+        AsyncNode('test_conc_svc_srv_node') as srv_node,
+        AsyncNode('test_conc_svc_client_node') as client_node,
+    ):
+        srv_node.create_service(
+            BasicTypesSrv, '/test_conc_svc', handler, concurrent=True)
+        client = client_node.create_client(BasicTypesSrv, '/test_conc_svc')
+
+        async with asyncio.timeout(5):
+            await client.wait_for_service()
+            async with asyncio.TaskGroup() as tg:
+                for _ in range(NUM_REQUESTS):
+                    tg.create_task(client.call(BasicTypesSrv.Request()))
+
+
+@pytest.mark.asyncio
+async def test_service_callback_exception():
+    """Exception in service callback propagates as ExceptionGroup."""
+    async def bad_handler(request, response):
+        raise ValueError('service boom')
+
+    node = AsyncNode('test_svc_exc_node')
+    node.create_service(BasicTypesSrv, '/test_svc_exc', bad_handler)
+    client_node = AsyncNode('test_svc_exc_client_node')
+    client = client_node.create_client(BasicTypesSrv, '/test_svc_exc')
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with asyncio.timeout(5):
+            async with node:
+                async with client_node:
+                    await client.wait_for_service()
+                    await client.call(BasicTypesSrv.Request())
+
+    assert exc_info.value.subgroup(ValueError)
+
+
+@pytest.mark.asyncio
+async def test_timer_zero_period():
+    """Timer with zero period fires immediately."""
+    fired = asyncio.Event()
+
+    async def callback():
+        fired.set()
+
+    async with AsyncNode('test_timer_zero_node') as node:
+        node.create_timer(0.0, callback)
+        async with asyncio.timeout(5):
+            await fired.wait()
+
+
+@pytest.mark.asyncio
+async def test_timer_callback_signature_rejected():
+    """Timer rejects callbacks with invalid signatures (2+ params)."""
+    node = AsyncNode('test_timer_bad_sig_node')
+
+    async def bad_callback(a, b):
+        pass
+
+    with pytest.raises(RuntimeError):
+        node.create_timer(1.0, bad_callback)
+
+    node.destroy_node()
+
+
+@pytest.mark.asyncio
+async def test_clock_sleep_zero_duration():
+    """Sleeping for zero duration returns immediately."""
+    async with AsyncNode('test_clock_zero_node') as node:
+        async with asyncio.timeout(1):
+            await node.get_clock().sleep(0)
+            await node.get_clock().sleep(-1.0)
+
+
+@pytest.mark.asyncio
+async def test_clock_sleep_on_destroyed_clock():
+    """Sleeping on a destroyed clock raises RuntimeError."""
+    node = AsyncNode('test_clock_destroyed_node')
+    clock = node.get_clock()
+    node.destroy_node()
+    with pytest.raises(RuntimeError):
+        await clock.sleep(1.0)
+
+
+@pytest.mark.asyncio
+async def test_aexit_destroys_on_exception():
+    """Node is properly destroyed even when async-with body raises."""
+    node = AsyncNode('test_aexit_exc_node')
+    pub = node.create_publisher(Strings, '/topic', TEST_QOS)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        async with node:
+            raise RuntimeError('user error')
+
+    assert exc_info.value.subgroup(RuntimeError)
+
+    # Node should be destroyed — creating entities must fail
+    with pytest.raises(RuntimeError):
+        node.create_publisher(Strings, '/topic2', TEST_QOS)
+
+    # Publisher should be destroyed — publishing must fail
+    with pytest.raises(RuntimeError):
+        pub.publish(Strings(string_value='nope'))

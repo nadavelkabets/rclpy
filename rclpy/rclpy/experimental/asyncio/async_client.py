@@ -32,10 +32,9 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         on_destroy: Callable[['AsyncClient'], None],
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        super().__init__(client_impl, srv_type, srv_name, qos_profile)
-        self._on_destroy: Optional[Callable[['AsyncClient'], None]] = on_destroy
+        super().__init__(client_impl, srv_type, srv_name, qos_profile,
+                         on_destroy=on_destroy)
         self._pending_requests: Dict[int, asyncio.Future] = {}
-        self._destroyed = False
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._read_event = asyncio.Event()
@@ -57,19 +56,13 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
         while not self.service_is_ready():
             await asyncio.sleep(check_interval)
 
-    def destroy(self) -> None:
-        if self._destroyed:
-            return
-        self._destroyed = True
-        if self._on_destroy is not None:
-            self._on_destroy(self)
-            self._on_destroy = None
+    def _destroy(self) -> None:
         if self._task is not None:
             self._task.cancel()
         self.handle.clear_on_new_response_callback()
         for future in self._pending_requests.values():
             future.cancel()
-        super().destroy()
+        super()._destroy()
 
     async def call(self, request: SrvRequestT) -> SrvResponseT:
         """Send a service request and await the response."""
