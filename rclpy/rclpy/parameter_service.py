@@ -70,7 +70,7 @@ class ParameterService:
             qos_profile=qos_profile_parameters
         )
 
-    def _describe_parameters_callback(
+    async def _describe_parameters_callback(
         self,
         request: DescribeParameters.Request,
         response: DescribeParameters.Response
@@ -86,7 +86,7 @@ class ParameterService:
             response.descriptors.append(descriptor)
         return response
 
-    def _get_parameters_callback(
+    async def _get_parameters_callback(
         self,
         request: GetParameters.Request,
         response: GetParameters.Response
@@ -102,7 +102,7 @@ class ParameterService:
             response.values.append(param.get_parameter_value())
         return response
 
-    def _get_parameter_types_callback(
+    async def _get_parameter_types_callback(
         self,
         request: GetParameterTypes.Request,
         response: GetParameterTypes.Response
@@ -118,7 +118,7 @@ class ParameterService:
             response.types.append(value)
         return response
 
-    def _list_parameters_callback(
+    async def _list_parameters_callback(
         self,
         request: ListParameters.Request,
         response: ListParameters.Response
@@ -130,7 +130,7 @@ class ParameterService:
             response.result = ListParametersResult()
         return response
 
-    def _set_parameters_callback(
+    async def _set_parameters_callback(
             self,
             request: SetParameters.Request,
             response: SetParameters.Response
@@ -149,7 +149,7 @@ class ParameterService:
             response.results.append(result)
         return response
 
-    def _set_parameters_atomically_callback(
+    async def _set_parameters_atomically_callback(
             self,
             request: SetParametersAtomically.Request,
             response: SetParametersAtomically.Response
