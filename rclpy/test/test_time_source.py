@@ -24,7 +24,7 @@ from rclpy.clock_type import ClockType
 from rclpy.duration import Duration
 from rclpy.parameter import Parameter
 from rclpy.time import Time
-from rclpy.time_source import CLOCK_TOPIC
+from rclpy.time_source import CLOCK_TOPIC, TimeSource
 import rosgraph_msgs.msg
 
 

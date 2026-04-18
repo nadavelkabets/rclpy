@@ -20,7 +20,8 @@ from rclpy.clock import ClockChange, JumpHandle, JumpThreshold, TimeJump
 from rclpy.context import Context
 from rclpy.duration import Duration
 from rclpy.exceptions import TimeSourceChangedError
-from rclpy.timer import AsyncTimerCallbackType, BaseTimer, TimerInfo
+from rclpy.executors import await_or_execute
+from rclpy.timer import BaseTimer, TimerCallbackType, TimerInfo
 
 from .async_clock import AsyncClock
 
@@ -33,12 +34,10 @@ class AsyncTimer(BaseTimer):
         timer_period_ns: int,
         clock: AsyncClock,
         context: Context,
-        callback: AsyncTimerCallbackType,
+        callback: TimerCallbackType,
         on_destroy: Callable[['AsyncTimer'], None],
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        if not inspect.iscoroutinefunction(callback):
-            raise TypeError('AsyncTimer callback must be an async function')
         super().__init__(timer_period_ns, clock, context=context,
                          on_destroy=on_destroy)
         self._callback = callback
@@ -127,9 +126,9 @@ class AsyncTimer(BaseTimer):
                 expected_call_time=info['expected_call_time'],
                 actual_call_time=info['actual_call_time'],
                 clock_type=self._clock.clock_type)
-            await self._callback(timer_info)
+            await await_or_execute(self._callback, timer_info)
         else:
-            await self._callback()
+            await await_or_execute(self._callback)
 
     async def _run(self) -> None:
         threshold = JumpThreshold(

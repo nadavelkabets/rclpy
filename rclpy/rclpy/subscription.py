@@ -132,6 +132,12 @@ class BaseSubscription(Generic[MsgT]):
             return self.__subscription.get_logger_name()
 
     @property
+    def is_cft_supported(self) -> bool:
+        """Check if content filtering is supported for this subscription."""
+        with self.handle:
+            return self.__subscription.is_cft_supported()
+
+    @property
     def is_cft_enabled(self) -> bool:
         """Check if content filtering is enabled for the subscription."""
         with self.handle:
@@ -284,8 +290,8 @@ class Subscription(BaseSubscription[MsgT], Generic[MsgT]):
 
     @callback.setter
     def callback(self, value: SubscriptionCallbackUnion[MsgT]) -> None:
-        self._callback = value
         self._callback_type = self._detect_callback_type(value)
+        self._callback = value
 
     def _destroy(self) -> None:
         for handler in self.event_handlers:

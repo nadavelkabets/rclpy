@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import asyncio
-import inspect
-from typing import Any, Awaitable, Callable, Optional, Type
+from typing import Any, Callable, Optional, Type
 
+from rclpy.executors import await_or_execute
 from rclpy.qos import QoSProfile
-from rclpy.service import BaseService
+from rclpy.service import BaseService, ServiceCallbackUnion
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
 
 
@@ -29,14 +29,12 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         service_impl: object,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[[SrvRequestT, SrvResponseT], Awaitable[SrvResponseT]],
+        callback: ServiceCallbackUnion[SrvRequestT, SrvResponseT],
         qos_profile: QoSProfile,
         on_destroy: Callable[['AsyncService'], None],
         concurrent: bool = False,
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        if not inspect.iscoroutinefunction(callback):
-            raise TypeError('AsyncService callback must be an async function')
         super().__init__(service_impl, srv_type, srv_name, qos_profile,
                          on_destroy=on_destroy)
         self.callback = callback
@@ -62,7 +60,8 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         request: SrvRequestT,
         header: Any,
     ) -> None:
-        response = await self.callback(request, self.srv_type.Response())
+        response = await await_or_execute(
+            self.callback, request, self.srv_type.Response())
         self._send_response(response, header)
 
     async def _requests(self):
@@ -84,10 +83,10 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
             if self._concurrent:
                 async with asyncio.TaskGroup() as tg:
                     async for request, header in self._requests():
-                        tg.create_task(self._handle_request(request, header))
+                        tg.create_task(await_or_execute(self._handle_request, request, header))
             else:
                 async for request, header in self._requests():
-                    await self._handle_request(request, header)
+                    await await_or_execute(self._handle_request, request, header)
         finally:
             self._task = None
             self.destroy()

@@ -744,29 +744,6 @@ async def test_create_timer_on_destroyed_node():
 
 
 @pytest.mark.asyncio
-async def test_sync_callback_rejected():
-    """Non-async callbacks are rejected by subscription, service, and timer."""
-    async with AsyncNode('test_sync_cb_node') as node:
-        def sync_sub_cb(msg):
-            pass
-
-        with pytest.raises(TypeError):
-            node.create_subscription(Strings, '/topic', sync_sub_cb, TEST_QOS)
-
-        def sync_srv_cb(request, response):
-            return response
-
-        with pytest.raises(TypeError):
-            node.create_service(BasicTypesSrv, '/service', sync_srv_cb)
-
-        def sync_timer_cb():
-            pass
-
-        with pytest.raises(TypeError):
-            node.create_timer(1.0, sync_timer_cb)
-
-
-@pytest.mark.asyncio
 async def test_destroy_node_idempotent():
     """Calling destroy_node() twice does not raise."""
     node = AsyncNode('test_double_destroy_node')

@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import asyncio
-import inspect
 from typing import Awaitable, Callable, Optional, Type
 
+from rclpy.executors import await_or_execute
 from rclpy.qos import QoSProfile
-from rclpy.subscription import AsyncGenericSubscriptionCallback, BaseSubscription
+from rclpy.subscription import BaseSubscription, SubscriptionCallbackUnion
 from rclpy.type_support import MsgT
 
 
@@ -29,15 +29,13 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         subscription_impl: object,
         msg_type: Type[MsgT],
         topic: str,
-        callback: AsyncGenericSubscriptionCallback[MsgT],
+        callback: SubscriptionCallbackUnion[MsgT],
         qos_profile: QoSProfile,
         on_destroy: Callable[['AsyncSubscription'], None],
         raw: bool = False,
         concurrent: bool = False,
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        if not inspect.iscoroutinefunction(callback):
-            raise TypeError('AsyncSubscription callback must be an async function')
         super().__init__(subscription_impl, msg_type, topic, qos_profile, raw,
                          on_destroy=on_destroy)
         self._callback = callback
@@ -54,7 +52,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         self._loop.call_soon_threadsafe(self._read_event.set)
 
     @property
-    def callback(self) -> AsyncGenericSubscriptionCallback[MsgT]:
+    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
         return self._callback
 
     def _destroy(self) -> None:
@@ -78,8 +76,8 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     def _make_callback(self, msg_and_info: tuple) -> Awaitable[None]:
         """Create a callback coroutine from a (msg, msg_info) tuple."""
         if self._callback_type is BaseSubscription.CallbackType.MessageOnly:
-            return self._callback(msg_and_info[0])
-        return self._callback(*msg_and_info)
+            return await_or_execute(self._callback, msg_and_info[0])
+        return await_or_execute(self._callback, *msg_and_info)
 
     async def _run(self) -> None:
         """DDS bridge read loop for subscriptions."""
