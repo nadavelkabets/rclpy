@@ -85,6 +85,12 @@ class BaseTimer:
         autostart: bool = True,
         on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
     ) -> None:
+        """
+        Create a timer.
+
+        .. warning:: Users should not create a timer with this constructor, instead they
+           should call :meth:`.Node.create_timer` or :meth:`.AsyncNode.create_timer`.
+        """
         self._context = get_default_context() if context is None else context
         self._clock = clock
         self._destroyed = False
