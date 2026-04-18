@@ -27,7 +27,13 @@ from .async_clock import AsyncClock
 
 
 class AsyncTimer(BaseTimer):
-    """Async timer that owns its clock-aware wait loop."""
+    """
+    Async timer that owns its clock-aware wait loop.
+
+    .. admonition:: Experimental
+
+       This API is experimental.
+    """
 
     def __init__(
         self,
@@ -38,9 +44,9 @@ class AsyncTimer(BaseTimer):
         on_destroy: Callable[['AsyncTimer'], None],
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        super().__init__(timer_period_ns, clock, context=context,
+        """Create an async timer."""
+        super().__init__(callback, timer_period_ns, clock, context=context,
                          on_destroy=on_destroy)
-        self._callback = callback
         self._pass_info = self._detect_wants_info(callback)
         self._task: Optional[asyncio.Task] = None
         self._reset_event = asyncio.Event()
@@ -126,9 +132,9 @@ class AsyncTimer(BaseTimer):
                 expected_call_time=info['expected_call_time'],
                 actual_call_time=info['actual_call_time'],
                 clock_type=self._clock.clock_type)
-            await await_or_execute(self._callback, timer_info)
+            await await_or_execute(self.callback, timer_info)
         else:
-            await await_or_execute(self._callback)
+            await await_or_execute(self.callback)
 
     async def _run(self) -> None:
         threshold = JumpThreshold(

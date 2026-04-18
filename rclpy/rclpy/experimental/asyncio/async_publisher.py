@@ -20,7 +20,13 @@ from rclpy.type_support import MsgT
 
 
 class AsyncPublisher(BasePublisher[MsgT]):
-    """Async publisher that integrates with AsyncNode lifecycle tracking."""
+    """
+    Async publisher that integrates with AsyncNode lifecycle tracking.
+
+    .. admonition:: Experimental
+
+       This API is experimental.
+    """
 
     def __init__(
         self,
@@ -30,5 +36,6 @@ class AsyncPublisher(BasePublisher[MsgT]):
         qos_profile: QoSProfile,
         on_destroy: Callable[['AsyncPublisher'], None],
     ) -> None:
+        """Create an async publisher."""
         super().__init__(publisher_impl, msg_type, topic, qos_profile,
                          on_destroy=on_destroy)

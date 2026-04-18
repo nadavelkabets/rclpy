@@ -43,6 +43,10 @@ class AsyncNode(BaseNode):
     """
     Async node with two mutually exclusive entry points.
 
+    .. admonition:: Experimental
+
+       This API is experimental.
+
     Simple reactive node::
 
         node = AsyncNode('my_node')
@@ -72,6 +76,7 @@ class AsyncNode(BaseNode):
         automatically_declare_parameters_from_overrides: bool = False,
         enable_logger_service: bool = False
     ) -> None:
+        """Create an async ROS node."""
         self._clock = AsyncClock(clock_type=ClockType.ROS_TIME)
         self._tg: Optional[asyncio.TaskGroup] = None
         self._entities: Set[AsyncEntity] = set()
@@ -270,6 +275,7 @@ class AsyncNode(BaseNode):
             srv_type, srv_name, qos_profile=qos_profile)
 
         client = AsyncClient(
+            self.context,
             client_handle,
             srv_type,
             srv_name,

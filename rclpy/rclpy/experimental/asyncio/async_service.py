@@ -22,7 +22,13 @@ from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
 
 
 class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
-    """Async service that owns its DDS bridge read loop."""
+    """
+    Async service that owns its DDS bridge read loop.
+
+    .. admonition:: Experimental
+
+       This API is experimental.
+    """
 
     def __init__(
         self,
@@ -35,9 +41,9 @@ class AsyncService(BaseService[SrvRequestT, SrvResponseT]):
         concurrent: bool = False,
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        super().__init__(service_impl, srv_type, srv_name, qos_profile,
+        """Create an async service server."""
+        super().__init__(service_impl, srv_type, srv_name, callback, qos_profile,
                          on_destroy=on_destroy)
-        self.callback = callback
         self._concurrent = concurrent
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None

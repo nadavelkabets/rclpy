@@ -22,7 +22,13 @@ from rclpy.type_support import MsgT
 
 
 class AsyncSubscription(BaseSubscription[MsgT]):
-    """Async subscription that owns its DDS bridge read loop."""
+    """
+    Async subscription that owns its DDS bridge read loop.
+
+    .. admonition:: Experimental
+
+       This API is experimental.
+    """
 
     def __init__(
         self,
@@ -36,10 +42,9 @@ class AsyncSubscription(BaseSubscription[MsgT]):
         concurrent: bool = False,
         tg: Optional[asyncio.TaskGroup] = None,
     ) -> None:
-        super().__init__(subscription_impl, msg_type, topic, qos_profile, raw,
+        """Create an async subscription."""
+        super().__init__(subscription_impl, msg_type, topic, callback, qos_profile, raw,
                          on_destroy=on_destroy)
-        self._callback = callback
-        self._callback_type = self._detect_callback_type(callback)
         self._concurrent = concurrent
         self._task: Optional[asyncio.Task] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -50,10 +55,6 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     def _on_new_message(self, _num_waiting: int) -> None:
         assert self._loop is not None
         self._loop.call_soon_threadsafe(self._read_event.set)
-
-    @property
-    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
-        return self._callback
 
     def _destroy(self) -> None:
         if self._task is not None:
@@ -76,8 +77,8 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     def _make_callback(self, msg_and_info: tuple) -> Awaitable[None]:
         """Create a callback coroutine from a (msg, msg_info) tuple."""
         if self._callback_type is BaseSubscription.CallbackType.MessageOnly:
-            return await_or_execute(self._callback, msg_and_info[0])
-        return await_or_execute(self._callback, *msg_and_info)
+            return await_or_execute(self.callback, msg_and_info[0])
+        return await_or_execute(self.callback, *msg_and_info)
 
     async def _run(self) -> None:
         """DDS bridge read loop for subscriptions."""
