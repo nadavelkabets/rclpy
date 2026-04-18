@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import TracebackType
-from typing import Callable
+from typing import Awaitable, Callable
 from typing import Generic
 from typing import Optional
 from typing import Type
@@ -26,11 +26,23 @@ from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
+from typing_extensions import Self
+from typing_extensions import TypeAlias
 
 # Used for documentation purposes only
 SrvType = TypeVar('SrvType')
 SrvTypeRequest = TypeVar('SrvTypeRequest')
 SrvTypeResponse = TypeVar('SrvTypeResponse')
+
+GenericServiceCallback: TypeAlias = Callable[[SrvRequestT, SrvResponseT], SrvResponseT]
+AsyncGenericServiceCallback: TypeAlias = Callable[
+    [SrvRequestT, SrvResponseT],
+    Awaitable[SrvResponseT]
+]
+ServiceCallbackUnion: TypeAlias = Union[
+    GenericServiceCallback[SrvRequestT, SrvResponseT],
+    AsyncGenericServiceCallback[SrvRequestT, SrvResponseT]
+]
 
 
 class BaseService(Generic[SrvRequestT, SrvResponseT]):
@@ -49,16 +61,14 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
         self.srv_type = srv_type
         self.srv_name = srv_name
         self.qos_profile = qos_profile
-        self._destroyed = False
         self._on_destroy = on_destroy
+        self._destroyed = False
 
-    @property
-    def handle(self) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
-        return self.__service
-
-    def _send_response(self, response: SrvResponseT,
-                       header: Union[_rclpy.rmw_service_info_t,
-                                     _rclpy.rmw_request_id_t]) -> None:
+    def _send_response(
+        self,
+        response: SrvResponseT,
+        header: Union[_rclpy.rmw_service_info_t, _rclpy.rmw_request_id_t]
+    ) -> None:
         if not isinstance(response, self.srv_type.Response):
             raise TypeError()
         with self.handle:
@@ -87,6 +97,10 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
                                                    introspection_state)
 
     @property
+    def handle(self) -> '_rclpy.Service[SrvRequestT, SrvResponseT]':
+        return self.__service
+
+    @property
     def service_name(self) -> str:
         with self.handle:
             return self.__service.name
@@ -110,18 +124,29 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
     def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
+    def __enter__(self) -> Self:
+        return self
 
-class Service(BaseService[SrvRequestT, SrvResponseT]):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.destroy()
+
+
+class Service(BaseService[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvResponseT]):
     def __init__(
         self,
         service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]',
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
-        callback: Callable[[SrvRequestT, SrvResponseT], SrvResponseT],
-        callback_group: CallbackGroup,
+        callback: ServiceCallbackUnion[SrvRequestT, SrvResponseT],
         qos_profile: QoSProfile,
         *,
         on_destroy: Optional[Callable[['Service[SrvRequestT, SrvResponseT]'], None]] = None,
+        callback_group: CallbackGroup
     ) -> None:
         """
         Create a container for a ROS service server.
@@ -138,15 +163,23 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
             nodes default callback group is used.
         :param qos_profile: The quality of service profile to apply the service server.
         """
-        super().__init__(service_impl, srv_type, srv_name, qos_profile,
-                         on_destroy=on_destroy)
+        super().__init__(
+            service_impl=service_impl,
+            srv_type=srv_type,
+            srv_name=srv_name,
+            qos_profile=qos_profile,
+            on_destroy=on_destroy
+        )
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
 
-    def send_response(self, response: SrvResponseT,
-                      header: Union[_rclpy.rmw_service_info_t, _rclpy.rmw_request_id_t]) -> None:
+    def send_response(
+        self,
+        response: SrvResponseT,
+        header: Union[_rclpy.rmw_service_info_t, _rclpy.rmw_request_id_t]
+    ) -> None:
         """
         Send a service response.
 
@@ -157,14 +190,3 @@ class Service(BaseService[SrvRequestT, SrvResponseT]):
           constructed.
         """
         self._send_response(response, header)
-
-    def __enter__(self) -> 'Service[SrvRequestT, SrvResponseT]':
-        return self
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.destroy()

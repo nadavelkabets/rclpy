@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import Mock
 
 import rclpy
-from rclpy.clock import Clock
+from rclpy.clock import BaseClock, Clock
 from rclpy.clock import ClockChange
 from rclpy.clock import JumpThreshold
 from rclpy.clock_type import ClockType
@@ -82,22 +82,22 @@ class TestTimeSource(unittest.TestCase):
         return use_sim_time_param.value == value
 
     def test_time_source_attach_clock(self) -> None:
-        time_source = self.node._time_source
+        for cls in [BaseClock, Clock]:
+            with self.subTest(cls=cls):
+                time_source = TimeSource(node=self.node)
+                time_source.attach_clock(cls(clock_type=ClockType.ROS_TIME))
 
-        # Only ROS_TIME clocks can be attached.
-        time_source.attach_clock(Clock(clock_type=ClockType.ROS_TIME))
+                # Other clock types are not supported.
+                with self.assertRaises(ValueError):
+                    time_source.attach_clock(
+                        cls(clock_type=ClockType.SYSTEM_TIME))
 
-        # Other clock types are not supported.
-        with self.assertRaises(ValueError):
-            time_source.attach_clock(
-                Clock(clock_type=ClockType.SYSTEM_TIME))
-
-        with self.assertRaises(ValueError):
-            time_source.attach_clock(
-                Clock(clock_type=ClockType.STEADY_TIME))
+                with self.assertRaises(ValueError):
+                    time_source.attach_clock(
+                        cls(clock_type=ClockType.STEADY_TIME))
 
     def test_time_source_not_using_sim_time(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
 
@@ -122,7 +122,7 @@ class TestTimeSource(unittest.TestCase):
         self.assertFalse(clock2.ros_time_is_active)
 
     def test_time_source_using_sim_time(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
 
@@ -149,7 +149,7 @@ class TestTimeSource(unittest.TestCase):
         assert clock2.now() <= Time(seconds=5, clock_type=ClockType.ROS_TIME)
 
     def test_forwards_jump(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
         assert self.set_use_sim_time_parameter(True)
@@ -169,7 +169,7 @@ class TestTimeSource(unittest.TestCase):
         handler.unregister()
 
     def test_backwards_jump(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
         assert self.set_use_sim_time_parameter(True)
@@ -189,7 +189,7 @@ class TestTimeSource(unittest.TestCase):
         handler.unregister()
 
     def test_clock_change(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
         assert self.set_use_sim_time_parameter(True)
@@ -215,7 +215,7 @@ class TestTimeSource(unittest.TestCase):
         handler.unregister()
 
     def test_no_pre_callback(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
         assert self.set_use_sim_time_parameter(True)
@@ -231,7 +231,7 @@ class TestTimeSource(unittest.TestCase):
         handler.unregister()
 
     def test_no_post_callback(self) -> None:
-        time_source = self.node._time_source
+        time_source = TimeSource(node=self.node)
         clock = Clock(clock_type=ClockType.ROS_TIME)
         time_source.attach_clock(clock)
         assert self.set_use_sim_time_parameter(True)

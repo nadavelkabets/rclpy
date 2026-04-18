@@ -17,7 +17,6 @@ import threading
 from types import TracebackType
 from typing import Awaitable
 from typing import Callable
-from typing import Coroutine
 from typing import Optional
 from typing import Type
 from typing import Union
@@ -30,6 +29,7 @@ from rclpy.exceptions import InvalidHandle, ROSInterruptException
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.time import Time
 from rclpy.utilities import get_default_context
+from typing_extensions import Self
 from typing_extensions import TypeAlias
 
 
@@ -67,11 +67,10 @@ class TimerInfo:
 
 
 TimerCallbackType: TypeAlias = Union[Callable[[], None],
-                                     Callable[[TimerInfo], None],
-                                     Callable[[], Coroutine[None, None, None]]]
-
+                                     Callable[[TimerInfo], None]]
 AsyncTimerCallbackType: TypeAlias = Union[Callable[[], Awaitable[None]],
                                           Callable[[TimerInfo], Awaitable[None]]]
+TimerCallbackUnion: TypeAlias = Union[TimerCallbackType, AsyncTimerCallbackType]
 
 
 class BaseTimer:
@@ -123,6 +122,12 @@ class BaseTimer:
             val = self.__timer.get_timer_period()
         return val
 
+    @timer_period_ns.setter
+    def timer_period_ns(self, value: int) -> None:
+        val = int(value)
+        with self.__timer:
+            self.__timer.change_timer_period(val)
+
     def is_ready(self) -> bool:
         with self.__timer:
             return self.__timer.is_timer_ready()
@@ -147,6 +152,17 @@ class BaseTimer:
         with self.__timer:
             return self.__timer.time_until_next_call()
 
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.destroy()
+
 
 class Timer(BaseTimer):
 
@@ -159,7 +175,7 @@ class Timer(BaseTimer):
         callback_group: Optional[CallbackGroup] = None,
         context: Optional[Context] = None,
         autostart: bool = True,
-        on_destroy: Optional[Callable[['Timer'], None]] = None,
+        on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
     ) -> None:
         """
         Create a Timer.
@@ -181,29 +197,17 @@ class Timer(BaseTimer):
         :param autostart: Whether to automatically start the timer after creation; defaults to
             ``True``.
         """
-        super().__init__(timer_period_ns, clock, context=context, autostart=autostart,
-                         on_destroy=on_destroy)
+        super().__init__(
+            timer_period_ns=timer_period_ns,
+            clock=clock,
+            context=context,
+            autostart=autostart,
+            on_destroy=on_destroy,
+        )
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
-
-    @BaseTimer.timer_period_ns.setter  # type: ignore[attr-defined]
-    def timer_period_ns(self, value: int) -> None:
-        val = int(value)
-        with self.handle:
-            self.handle.change_timer_period(val)
-
-    def __enter__(self) -> 'Timer':
-        return self
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.destroy()
 
 
 class Rate:

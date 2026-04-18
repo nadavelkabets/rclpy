@@ -53,7 +53,8 @@ public:
    */
   Subscription(
     Node & node, py::object pymsg_type, std::string topic,
-    py::object pyqos_profile, py::object content_filter_options = py::none());
+    py::object pyqos_profile, py::object content_filter_options = py::none(),
+    py::object acceptable_buffer_backends = py::none());
 
   /// Take a message and its metadata from a subscription
   /**
@@ -114,6 +115,9 @@ public:
 
   void
   clear_on_new_message_callback();
+
+  /// Check if subscription instance supports content filter.
+  bool is_cft_supported() const;
 
   /// Check if the content filtered topic of this subscription is enabled
   bool is_cft_enabled() const;

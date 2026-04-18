@@ -34,6 +34,7 @@ from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
 from rclpy.subscription_content_filter_options import ContentFilterOptions
 from rclpy.type_support import MsgT
+from typing_extensions import Self
 from typing_extensions import TypeAlias
 
 
@@ -62,10 +63,10 @@ GenericSubscriptionCallback: TypeAlias = Union[Callable[[T], None],
                                                Callable[[T, MessageInfo], None]]
 AsyncGenericSubscriptionCallback: TypeAlias = Union[Callable[[T], Awaitable[None]],
                                                     Callable[[T, MessageInfo], Awaitable[None]]]
-SubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallback[MsgT],
-                                             GenericSubscriptionCallback[bytes],
-                                             AsyncGenericSubscriptionCallback[MsgT],
-                                             AsyncGenericSubscriptionCallback[bytes]]
+GenericSubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallback[T],
+                                                    AsyncGenericSubscriptionCallback[T]]
+SubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallbackUnion[MsgT],
+                                             GenericSubscriptionCallbackUnion[bytes]]
 
 
 class BaseSubscription(Generic[MsgT]):
@@ -90,8 +91,8 @@ class BaseSubscription(Generic[MsgT]):
         self.topic = topic
         self.qos_profile = qos_profile
         self.raw = raw
-        self._destroyed = False
         self._on_destroy = on_destroy
+        self._destroyed = False
 
     @property
     def handle(self) -> '_rclpy.Subscription[MsgT]':
@@ -171,8 +172,19 @@ class BaseSubscription(Generic[MsgT]):
     def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
+    def __enter__(self) -> Self:
+        return self
 
-class Subscription(BaseSubscription[MsgT]):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.destroy()
+
+
+class Subscription(BaseSubscription[MsgT], Generic[MsgT]):
 
     @overload
     def __init__(
@@ -180,51 +192,57 @@ class Subscription(BaseSubscription[MsgT]):
          subscription_impl: '_rclpy.Subscription[MsgT]',
          msg_type: Type[MsgT],
          topic: str,
-         callback: GenericSubscriptionCallback[bytes],
-         callback_group: CallbackGroup,
+         callback: GenericSubscriptionCallbackUnion[bytes],
          qos_profile: QoSProfile,
          raw: Literal[True],
-         event_callbacks: SubscriptionEventCallbacks,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-         self,
-         subscription_impl: '_rclpy.Subscription[MsgT]',
-         msg_type: Type[MsgT],
-         topic: str,
-         callback: GenericSubscriptionCallback[MsgT],
-         callback_group: CallbackGroup,
-         qos_profile: QoSProfile,
-         raw: Literal[False],
-         event_callbacks: SubscriptionEventCallbacks,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-         self,
-         subscription_impl: '_rclpy.Subscription[MsgT]',
-         msg_type: Type[MsgT],
-         topic: str,
-         callback: SubscriptionCallbackUnion[MsgT],
-         callback_group: CallbackGroup,
-         qos_profile: QoSProfile,
-         raw: bool,
-         event_callbacks: SubscriptionEventCallbacks,
-    ) -> None: ...
-
-    def __init__(
-         self,
-         subscription_impl: '_rclpy.Subscription[MsgT]',
-         msg_type: Type[MsgT],
-         topic: str,
-         callback: SubscriptionCallbackUnion[MsgT],
-         callback_group: CallbackGroup,
-         qos_profile: QoSProfile,
-         raw: bool,
-         event_callbacks: SubscriptionEventCallbacks,
          *,
          on_destroy: Optional[Callable[['Subscription[MsgT]'], None]] = None,
+         callback_group: CallbackGroup,
+         event_callbacks: SubscriptionEventCallbacks,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: GenericSubscriptionCallbackUnion[MsgT],
+         qos_profile: QoSProfile,
+         raw: Literal[False],
+         *,
+         on_destroy: Optional[Callable[['Subscription[MsgT]'], None]] = None,
+         callback_group: CallbackGroup,
+         event_callbacks: SubscriptionEventCallbacks,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: SubscriptionCallbackUnion[MsgT],
+         qos_profile: QoSProfile,
+         raw: bool,
+         *,
+         on_destroy: Optional[Callable[['Subscription[MsgT]'], None]] = None,
+         callback_group: CallbackGroup,
+         event_callbacks: SubscriptionEventCallbacks,
+    ) -> None: ...
+
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: SubscriptionCallbackUnion[MsgT],
+         qos_profile: QoSProfile,
+         raw: bool,
+         *,
+         on_destroy: Optional[Callable[['Subscription[MsgT]'], None]] = None,
+         callback_group: CallbackGroup,
+         event_callbacks: SubscriptionEventCallbacks,
     ) -> None:
         """
         Create a container for a ROS subscription.
@@ -244,8 +262,14 @@ class Subscription(BaseSubscription[MsgT]):
         :param raw: If ``True``, then received messages will be stored in raw binary
             representation.
         """
-        super().__init__(subscription_impl, msg_type, topic, qos_profile, raw,
-                         on_destroy=on_destroy)
+        super().__init__(
+            subscription_impl=subscription_impl,
+            msg_type=msg_type,
+            topic=topic,
+            qos_profile=qos_profile,
+            raw=raw,
+            on_destroy=on_destroy,
+        )
         self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
@@ -267,14 +291,3 @@ class Subscription(BaseSubscription[MsgT]):
         for handler in self.event_handlers:
             handler.destroy()
         super()._destroy()
-
-    def __enter__(self) -> 'Subscription[MsgT]':
-        return self
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.destroy()

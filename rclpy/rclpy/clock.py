@@ -138,7 +138,6 @@ class JumpHandle:
 
 
 class BaseClock:
-    """Base clock with shared state and introspection. No sync sleep methods."""
 
     def __init__(self, *, clock_type: ClockType = ClockType.SYSTEM_TIME) -> None:
         if not isinstance(clock_type, ClockType):
@@ -160,7 +159,7 @@ class BaseClock:
         return self.__clock
 
     def __repr__(self) -> str:
-        return '{0}(clock_type={1})'.format(type(self).__name__, self.clock_type.name)
+        return f'{type(self).__name__}(clock_type={self.clock_type.name})'
 
     def now(self) -> Time:
         """Return the current time of this clock."""
@@ -189,7 +188,6 @@ class BaseClock:
             original_callback = post_callback
 
             def callback_shim(jump_dict: TimeJumpDictionary) -> None:
-                nonlocal original_callback
                 clock_change = jump_dict['clock_change']
                 duration = Duration(nanoseconds=jump_dict['delta'])
                 original_callback(TimeJump(clock_change, duration))
@@ -231,13 +229,12 @@ class BaseClock:
 
 
 class Clock(BaseClock):
-    """Clock with synchronous sleep support for executor-based nodes."""
 
     def sleep_until(self, until: Time, context: Optional[Context] = None) -> bool:
         """
         Sleep until a specific time on this Clock is reached.
 
-        When using a ``ROSClock``, this may sleep forever if the ``TimeSource`` is misconfigured
+        When using ``ROS_TIME``, this may sleep forever if the ``TimeSource`` is misconfigured
         and the context is never shut down.
         ROS time being activated or deactivated causes this function to cease sleeping and return
         ``False``.
@@ -306,7 +303,7 @@ class Clock(BaseClock):
             clock.sleep_until(clock.now() + rel_time, context)
 
 
-        When using a ROS time clock, this may sleep forever if the ``TimeSource`` is misconfigured
+        When using a ``ROS_TIME``, this may sleep forever if the ``TimeSource`` is misconfigured
         and the context is never shut down.
         ROS time being activated or deactivated causes this function to cease sleeping and return
         False.
@@ -321,7 +318,7 @@ class Clock(BaseClock):
         return self.sleep_until(self.now() + rel_time, context)
 
 
-@deprecated('Use Clock(clock_type=ClockType.ROS_TIME) instead.')
+@deprecated('Use Clock(clock_type=ClockType.ROS_TIME) instead')
 class ROSClock(Clock):
 
     def __init__(self) -> None:

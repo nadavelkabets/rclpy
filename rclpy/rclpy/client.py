@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import threading
 import time
 from types import TracebackType
-from typing import Callable
 from typing import Dict
 from typing import Generic
 from typing import Optional
@@ -30,6 +30,8 @@ from rclpy.qos import QoSProfile
 from rclpy.service_introspection import ServiceIntrospectionState
 from rclpy.task import Future
 from rclpy.type_support import Srv, SrvRequestT, SrvResponseT
+
+from typing_extensions import Self
 
 # Left To Support Legacy TypeVars
 SrvType = TypeVar('SrvType')
@@ -53,12 +55,8 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
         self.srv_type = srv_type
         self.srv_name = srv_name
         self.qos_profile = qos_profile
-        self._destroyed = False
         self._on_destroy = on_destroy
-
-    @property
-    def handle(self) -> '_rclpy.Client[SrvRequestT, SrvResponseT]':
-        return self.__client
+        self._destroyed = False
 
     def service_is_ready(self) -> bool:
         """
@@ -87,6 +85,10 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
                                                   introspection_state)
 
     @property
+    def handle(self) -> '_rclpy.Client[SrvRequestT, SrvResponseT]':
+        return self.__client
+
+    @property
     def service_name(self) -> str:
         with self.handle:
             return self.__client.service_name
@@ -110,8 +112,19 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
     def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
+    def __enter__(self) -> Self:
+        return self
 
-class Client(BaseClient[SrvRequestT, SrvResponseT]):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.destroy()
+
+
+class Client(BaseClient[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvResponseT]):
     def __init__(
         self,
         context: Context,
@@ -119,9 +132,9 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
         qos_profile: QoSProfile,
-        callback_group: CallbackGroup,
         *,
         on_destroy: Optional[Callable[['Client[SrvRequestT, SrvResponseT]'], None]] = None,
+        callback_group: CallbackGroup
     ) -> None:
         """
         Create a container for a ROS service client.
@@ -137,8 +150,13 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         :param callback_group: The callback group for the service client. If ``None``, then the
             nodes default callback group is used.
         """
-        super().__init__(client_impl, srv_type, srv_name, qos_profile,
-                         on_destroy=on_destroy)
+        super().__init__(
+            client_impl=client_impl,
+            srv_type=srv_type,
+            srv_name=srv_name,
+            qos_profile=qos_profile,
+            on_destroy=on_destroy
+        )
         self.context = context
         # Key is a sequence number, value is an instance of a Future
         self._pending_requests: Dict[int, Future[SrvResponseT]] = {}
@@ -172,7 +190,6 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
         event = threading.Event()
 
         def unblock(future: Future[SrvResponseT]) -> None:
-            nonlocal event
             event.set()
 
         future = self.call_async(request)
@@ -266,14 +283,3 @@ class Client(BaseClient[SrvRequestT, SrvResponseT]):
             timeout_sec -= sleep_time
 
         return self.service_is_ready()
-
-    def __enter__(self) -> 'Client[SrvRequestT, SrvResponseT]':
-        return self
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.destroy()

@@ -216,7 +216,7 @@ class AsyncNode(BaseNode):
         self._entities.add(sub)
         return sub
 
-    def _register_service(
+    def _create_service(
         self,
         service_impl: object,
         srv_type: Type[Srv[SrvRequestT, SrvResponseT]],
@@ -252,7 +252,7 @@ class AsyncNode(BaseNode):
             raise RuntimeError('Cannot create service on a destroyed node')
         service_handle = self._create_service_handle(
             srv_type, srv_name, qos_profile=qos_profile)
-        return self._register_service(
+        return self._create_service(
             service_handle, srv_type, srv_name, callback, qos_profile,
             concurrent=concurrent)
 

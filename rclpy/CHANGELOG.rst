@@ -2,6 +2,29 @@
 Changelog for package rclpy
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+10.0.8 (2026-04-09)
+-------------------
+* Add acceptable_buffer_backends as subscription option in rclpy (`#1628 <https://github.com/ros2/rclpy/issues/1628>`_)
+* publish_feedback should effect only on executing state. (`#1639 <https://github.com/ros2/rclpy/issues/1639>`_)
+* Support to configure feedback subscription content filter for action client (`#1633 <https://github.com/ros2/rclpy/issues/1633>`_)
+* fix flaky test_multi_threaded_executor_closes_threads. (`#1636 <https://github.com/ros2/rclpy/issues/1636>`_)
+* Fix violation (`#1635 <https://github.com/ros2/rclpy/issues/1635>`_)
+* Fix test_executor types (`#1632 <https://github.com/ros2/rclpy/issues/1632>`_)
+* Refactor: base clock (`#1627 <https://github.com/ros2/rclpy/issues/1627>`_)
+* Contributors: Barry Xu, CY Chen, Michael Carlstrom, Nadav Elkabets, Tomoya Fujita
+
+10.0.7 (2026-03-24)
+-------------------
+* Fix future flake8 (`#1634 <https://github.com/ros2/rclpy/issues/1634>`_)
+* Use new ROSIDL aggregate CMake target (`#1630 <https://github.com/ros2/rclpy/issues/1630>`_)
+* Update type hints for parameters (`#1631 <https://github.com/ros2/rclpy/issues/1631>`_)
+* Add support check for content filter feature in subscription (`#1618 <https://github.com/ros2/rclpy/issues/1618>`_)
+* Refactor: base entity classes (`#1624 <https://github.com/ros2/rclpy/issues/1624>`_)
+* Fix more test typings and remove unused type aliases (`#1626 <https://github.com/ros2/rclpy/issues/1626>`_)
+* Add types to test_waitable (`#1625 <https://github.com/ros2/rclpy/issues/1625>`_)
+* Correct typos (`#1619 <https://github.com/ros2/rclpy/issues/1619>`_)
+* Contributors: Auguste Lalande, Barry Xu, Emerson Knapp, Michael Carlstrom, Nadav Elkabets
+
 10.0.6 (2026-03-09)
 -------------------
 * Fix incorrect action client/server callback type hints (`#1616 <https://github.com/ros2/rclpy/issues/1616>`_)

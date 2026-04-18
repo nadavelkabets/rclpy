@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
-from typing import Generic, Tuple, Type, TYPE_CHECKING, TypedDict, Union
+from collections.abc import Callable
+from typing import Generic, Optional, Tuple, Type, TYPE_CHECKING, TypedDict, Union
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.event_handler import PublisherEventCallbacks
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
+from rclpy.publisher import BasePublisher
 from rclpy.publisher import Publisher
 from rclpy.qos import QoSProfile
 from rclpy.type_support import MsgT
@@ -29,14 +31,14 @@ from typing_extensions import Unpack
 from .managed_entity import SimpleManagedEntity
 
 if TYPE_CHECKING:
-    LifecyclePublisherArgs: TypeAlias = Tuple[_rclpy.Publisher[MsgT], Type[MsgT], str, QoSProfile,
-                                              PublisherEventCallbacks, CallbackGroup]
+    LifecyclePublisherArgs: TypeAlias = Tuple[_rclpy.Publisher[MsgT], Type[MsgT], str, QoSProfile]
 
     class LifecyclePublisherKWArgs(TypedDict, Generic[MsgT]):
         publisher_impl: _rclpy.Publisher[MsgT]
         msg_type: Type[MsgT]
         topic: str
         qos_profile: QoSProfile
+        on_destroy: Optional[Callable[['Publisher[MsgT]'], None]]
         event_callbacks: PublisherEventCallbacks
         callback_group: CallbackGroup
 
@@ -59,4 +61,4 @@ class LifecyclePublisher(SimpleManagedEntity, Publisher[MsgT]):
 
         See rclpy.publisher.Publisher.publish() for more details.
         """
-        Publisher.publish(self, msg)
+        BasePublisher.publish(self, msg)

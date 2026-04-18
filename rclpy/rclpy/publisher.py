@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from types import TracebackType
-from typing import Callable, Generic, List, Optional, Type, TypeVar, Union
+from typing import Generic, List, Optional, Type, TypeVar, Union
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.duration import Duration
@@ -21,6 +22,9 @@ from rclpy.event_handler import EventHandler, PublisherEventCallbacks
 from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.qos import QoSProfile
 from rclpy.type_support import MsgT
+
+from typing_extensions import Self
+
 
 # Left to support Legacy TypeVars.
 MsgType = TypeVar('MsgType')
@@ -41,8 +45,8 @@ class BasePublisher(Generic[MsgT]):
         self.msg_type = msg_type
         self.topic = topic
         self.qos_profile = qos_profile
-        self._destroyed = False
         self._on_destroy = on_destroy
+        self._destroyed = False
 
     def publish(self, msg: Union[MsgT, bytes]) -> None:
         """
@@ -51,10 +55,7 @@ class BasePublisher(Generic[MsgT]):
         :param msg: The ROS message to publish.
         :raises: TypeError if the type of the passed message isn't an instance
           of the provided type when the publisher was constructed.
-        :raises RuntimeError: If the publisher has been destroyed.
         """
-        if self._destroyed:
-            raise RuntimeError('Publishing on a destroyed publisher is forbidden')
         with self.handle:
             if isinstance(msg, self.msg_type):
                 self.__publisher.publish(msg)
@@ -83,16 +84,6 @@ class BasePublisher(Generic[MsgT]):
         with self.handle:
             return self.__publisher.get_logger_name()
 
-    def assert_liveliness(self) -> None:
-        """
-        Manually assert that this Publisher is alive.
-
-        If the QoS Liveliness policy is set to MANUAL_BY_TOPIC, the
-        application must call this at least as often as ``QoSProfile.liveliness_lease_duration``.
-        """
-        with self.handle:
-            _rclpy.rclpy_assert_liveliness(self.handle)
-
     def destroy(self) -> None:
         """Destroy the publisher, notifying the owning node and releasing the handle."""
         if self._destroyed:
@@ -106,8 +97,29 @@ class BasePublisher(Generic[MsgT]):
     def _destroy(self) -> None:
         self.handle.destroy_when_not_in_use()
 
+    def assert_liveliness(self) -> None:
+        """
+        Manually assert that this Publisher is alive.
 
-class Publisher(BasePublisher[MsgT]):
+        If the QoS Liveliness policy is set to MANUAL_BY_TOPIC, the
+        application must call this at least as often as ``QoSProfile.liveliness_lease_duration``.
+        """
+        with self.handle:
+            _rclpy.rclpy_assert_liveliness(self.handle)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        self.destroy()
+
+
+class Publisher(BasePublisher[MsgT], Generic[MsgT]):
 
     def __init__(
         self,
@@ -115,10 +127,10 @@ class Publisher(BasePublisher[MsgT]):
         msg_type: Type[MsgT],
         topic: str,
         qos_profile: QoSProfile,
-        event_callbacks: PublisherEventCallbacks,
-        callback_group: CallbackGroup,
         *,
         on_destroy: Optional[Callable[['Publisher[MsgT]'], None]] = None,
+        event_callbacks: PublisherEventCallbacks,
+        callback_group: CallbackGroup,
     ) -> None:
         """
         Create a container for a ROS publisher.
@@ -134,16 +146,16 @@ class Publisher(BasePublisher[MsgT]):
         :param topic: The name of the topic the publisher will publish to.
         :param qos_profile: The quality of service profile to apply to the publisher.
         """
-        super().__init__(publisher_impl, msg_type, topic, qos_profile,
-                         on_destroy=on_destroy)
+        super().__init__(
+            publisher_impl=publisher_impl,
+            msg_type=msg_type,
+            topic=topic,
+            qos_profile=qos_profile,
+        )
+        self._on_destroy = on_destroy
 
         self.event_handlers: List[EventHandler] = event_callbacks.create_event_handlers(
             callback_group, publisher_impl, topic)
-
-    def _destroy(self) -> None:
-        for handler in self.event_handlers:
-            handler.destroy()
-        super()._destroy()
 
     def wait_for_all_acked(self, timeout: Duration = Duration(seconds=-1)) -> bool:
         """
@@ -165,13 +177,7 @@ class Publisher(BasePublisher[MsgT]):
         with self.handle:
             return self.handle.wait_for_all_acked(timeout._duration_handle)
 
-    def __enter__(self) -> 'Publisher[MsgT]':
-        return self
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> None:
-        self.destroy()
+    def _destroy(self) -> None:
+        for handler in self.event_handlers:
+            handler.destroy()
+        super()._destroy()

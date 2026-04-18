@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator
 import functools
 import os
 import platform
@@ -25,23 +26,24 @@ import rclpy
 from rclpy.clock_type import ClockType
 from rclpy.constants import S_TO_NS
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
 from rclpy.timer import TimerInfo
 
 
 @pytest.fixture
-def context() -> None:
+def context() -> rclpy.context.Context:
     return rclpy.context.Context()
 
 
 @pytest.fixture
-def setup_ros(context) -> None:
+def setup_ros(context: rclpy.context.Context) -> Generator[None, None, None]:
     rclpy.init(context=context)
     yield
     rclpy.shutdown(context=context)
 
 
 @pytest.fixture
-def test_node(context, setup_ros):
+def test_node(context: rclpy.context.Context, setup_ros: None) -> Generator[Node, None, None]:
     node = rclpy.create_node('test_node', context=context)
     yield node
     node.destroy_node()
@@ -350,7 +352,7 @@ def test_timer_info_with_partial() -> None:
         rclpy.shutdown(context=context)
 
 
-def test_on_reset_callback(test_node):
+def test_on_reset_callback(test_node: Node) -> None:
     tmr = test_node.create_timer(1, lambda: None)
     cb = Mock()
     tmr.handle.set_on_reset_callback(cb)
@@ -360,3 +362,13 @@ def test_on_reset_callback(test_node):
     tmr.handle.clear_on_reset_callback()
     tmr.reset()
     cb.assert_called_once()
+
+
+def test_timer_direct_destroy(test_node: Node) -> None:
+    tmr = test_node.create_timer(1, lambda: None)
+
+    assert tmr in list(test_node.timers)
+    tmr.destroy()
+    assert tmr not in list(test_node.timers)
+    tmr.destroy()
+    assert not test_node.destroy_timer(tmr)
