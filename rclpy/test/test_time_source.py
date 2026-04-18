@@ -24,7 +24,8 @@ from rclpy.clock_type import ClockType
 from rclpy.duration import Duration
 from rclpy.parameter import Parameter
 from rclpy.time import Time
-from rclpy.time_source import CLOCK_TOPIC, TimeSource
+from rclpy.time_source import CLOCK_TOPIC
+from rclpy.time_source import TimeSource
 import rosgraph_msgs.msg
 
 
@@ -120,6 +121,7 @@ class TestTimeSource(unittest.TestCase):
         clock2._set_ros_time_is_active(True)
         time_source.attach_clock(clock2)
         self.assertFalse(clock2.ros_time_is_active)
+        assert time_source._clock_sub is None
 
     def test_time_source_using_sim_time(self) -> None:
         time_source = TimeSource(node=self.node)
@@ -134,6 +136,9 @@ class TestTimeSource(unittest.TestCase):
         self.assertTrue(time_source.ros_time_is_active)
         self.assertTrue(clock.ros_time_is_active)
 
+        # A subscriber should have been created
+        assert time_source._clock_sub is not None
+
         # Before any messages have been received on the /clock topic, now() should return 0
         assert clock.now() == Time(seconds=0, clock_type=ClockType.ROS_TIME)
 
@@ -147,6 +152,14 @@ class TestTimeSource(unittest.TestCase):
         time_source.attach_clock(clock2)
         assert clock2.now() > Time(seconds=0, clock_type=ClockType.ROS_TIME)
         assert clock2.now() <= Time(seconds=5, clock_type=ClockType.ROS_TIME)
+
+        # Check detaching the node
+        time_source.detach_node()
+        node2 = rclpy.create_node('TestTimeSource2', namespace='/rclpy', context=self.context)
+        time_source.attach_node(node2)
+        node2.destroy_node()
+        assert time_source._get_node() == node2
+        assert time_source._clock_sub is None
 
     def test_forwards_jump(self) -> None:
         time_source = TimeSource(node=self.node)

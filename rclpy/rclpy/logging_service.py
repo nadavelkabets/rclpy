@@ -45,8 +45,8 @@ class LoggingService:
             self._set_logger_levels, qos_profile=qos_profile_services_default
         )
 
-    async def _get_logger_levels(self, request: GetLoggerLevels.Request,
-                                 response: GetLoggerLevels.Response) -> GetLoggerLevels.Response:
+    def _get_logger_levels(self, request: GetLoggerLevels.Request,
+                           response: GetLoggerLevels.Response) -> GetLoggerLevels.Response:
         for name in request.names:
             logger_level = LoggerLevel()
             logger_level.name = name
@@ -58,8 +58,8 @@ class LoggingService:
             response.levels.append(logger_level)
         return response
 
-    async def _set_logger_levels(self, request: SetLoggerLevels.Request,
-                                 response: SetLoggerLevels.Response) -> SetLoggerLevels.Response:
+    def _set_logger_levels(self, request: SetLoggerLevels.Request,
+                           response: SetLoggerLevels.Response) -> SetLoggerLevels.Response:
         for level in request.levels:
             result = SetLoggerLevelsResult()
             result.successful = False

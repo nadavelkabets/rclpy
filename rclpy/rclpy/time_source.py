@@ -115,7 +115,7 @@ class TimeSource:
         clock._set_ros_time_is_active(self.ros_time_is_active)
         self._associated_clocks.add(clock)
 
-    async def clock_callback(self, msg: rosgraph_msgs.msg.Clock) -> None:
+    def clock_callback(self, msg: rosgraph_msgs.msg.Clock) -> None:
         # Cache the last message in case a new clock is attached.
         time_from_msg = Time.from_msg(msg.clock)
         self._last_time_set = time_from_msg

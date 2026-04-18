@@ -40,10 +40,9 @@ SrvTypeResponse = TypeVar('SrvTypeResponse')
 
 
 class BaseClient(Generic[SrvRequestT, SrvResponseT]):
-    """Shared state and query methods for clients (executor and async)."""
-
     def __init__(
         self,
+        context: Context,
         client_impl: '_rclpy.Client[SrvRequestT, SrvResponseT]',
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
@@ -57,6 +56,7 @@ class BaseClient(Generic[SrvRequestT, SrvResponseT]):
         .. warning:: Users should not create a service client with this constructor, instead they
            should call :meth:`.Node.create_client` or :meth:`.AsyncNode.create_client`.
         """
+        self.context = context
         self.__client = client_impl
         self.srv_type = srv_type
         self.srv_name = srv_name
@@ -139,7 +139,7 @@ class Client(BaseClient[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvResp
         srv_name: str,
         qos_profile: QoSProfile,
         *,
-        on_destroy: Optional[Callable[['Client[SrvRequestT, SrvResponseT]'], None]] = None,
+        on_destroy: Optional[Callable[['BaseClient[SrvRequestT, SrvResponseT]'], None]] = None,
         callback_group: CallbackGroup
     ) -> None:
         """
@@ -157,13 +157,13 @@ class Client(BaseClient[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvResp
             nodes default callback group is used.
         """
         super().__init__(
+            context=context,
             client_impl=client_impl,
             srv_type=srv_type,
             srv_name=srv_name,
             qos_profile=qos_profile,
             on_destroy=on_destroy
         )
-        self.context = context
         # Key is a sequence number, value is an instance of a Future
         self._pending_requests: Dict[int, Future[SrvResponseT]] = {}
         self.callback_group = callback_group
@@ -224,10 +224,7 @@ class Client(BaseClient[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvResp
         :raises: TypeError if the type of the passed request isn't an instance
           of the Request type of the provided service when the client was
           constructed.
-        :raises RuntimeError: If the client has been destroyed.
         """
-        if self._destroyed:
-            raise RuntimeError('Calling on a destroyed client is forbidden')
         if not isinstance(request, self.srv_type.Request):
             raise TypeError()
 

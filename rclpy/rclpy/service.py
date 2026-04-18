@@ -46,13 +46,13 @@ ServiceCallbackUnion: TypeAlias = Union[
 
 
 class BaseService(Generic[SrvRequestT, SrvResponseT]):
-    """Shared state and methods for services (executor and async)."""
 
     def __init__(
         self,
         service_impl: '_rclpy.Service[SrvRequestT, SrvResponseT]',
         srv_type: type[Srv[SrvRequestT, SrvResponseT]],
         srv_name: str,
+        callback: ServiceCallbackUnion[SrvRequestT, SrvResponseT],
         qos_profile: QoSProfile,
         *,
         on_destroy: Optional[Callable[['BaseService[SrvRequestT, SrvResponseT]'], None]] = None,
@@ -66,6 +66,7 @@ class BaseService(Generic[SrvRequestT, SrvResponseT]):
         self.__service = service_impl
         self.srv_type = srv_type
         self.srv_name = srv_name
+        self.callback = callback
         self.qos_profile = qos_profile
         self._on_destroy = on_destroy
         self._destroyed = False
@@ -173,10 +174,10 @@ class Service(BaseService[SrvRequestT, SrvResponseT], Generic[SrvRequestT, SrvRe
             service_impl=service_impl,
             srv_type=srv_type,
             srv_name=srv_name,
+            callback=callback,
             qos_profile=qos_profile,
             on_destroy=on_destroy
         )
-        self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False

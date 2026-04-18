@@ -22,7 +22,7 @@ from typing import Type
 from typing import Union
 
 from rclpy.callback_groups import CallbackGroup
-from rclpy.clock import BaseClock, Clock
+from rclpy.clock import Clock
 from rclpy.clock_type import ClockType
 from rclpy.context import Context
 from rclpy.exceptions import InvalidHandle, ROSInterruptException
@@ -74,16 +74,16 @@ TimerCallbackUnion: TypeAlias = Union[TimerCallbackType, AsyncTimerCallbackType]
 
 
 class BaseTimer:
-    """Base timer wrapping a _rclpy.Timer C handle. Shared state and introspection."""
 
     def __init__(
         self,
+        callback: Optional[TimerCallbackUnion],
         timer_period_ns: int,
-        clock: BaseClock,
+        clock: Clock,
         *,
-        context: Optional[Context] = None,
-        autostart: bool = True,
         on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
+        context: Optional[Context] = None,
+        autostart: bool = True
     ) -> None:
         """
         Create a timer.
@@ -93,13 +93,14 @@ class BaseTimer:
         """
         self._context = get_default_context() if context is None else context
         self._clock = clock
-        self._destroyed = False
-        self._on_destroy = on_destroy
         if self._context.handle is None:
-            raise RuntimeError('Context must be initialized before creating a Timer.')
+            raise RuntimeError('Context must be initialized before create a _rclpy.Timer.')
         with self._clock.handle, self._context.handle:
             self.__timer = _rclpy.Timer(
                 self._clock.handle, self._context.handle, timer_period_ns, autostart)
+        self.callback = callback
+        self._on_destroy = on_destroy
+        self._destroyed = False
 
     @property
     def handle(self) -> _rclpy.Timer:
@@ -174,14 +175,14 @@ class Timer(BaseTimer):
 
     def __init__(
         self,
+        callback: Optional[TimerCallbackUnion],
         timer_period_ns: int,
         clock: Clock,
         *,
-        callback: Optional[TimerCallbackType] = None,
-        callback_group: Optional[CallbackGroup] = None,
+        on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
         context: Optional[Context] = None,
         autostart: bool = True,
-        on_destroy: Optional[Callable[['BaseTimer'], None]] = None,
+        callback_group: Optional[CallbackGroup] = None
     ) -> None:
         """
         Create a Timer.
@@ -194,23 +195,23 @@ class Timer(BaseTimer):
         .. warning:: Users should not create a timer with this constructor, instead they
            should call :meth:`.Node.create_timer`.
 
-        :param timer_period_ns: The period (in nanoseconds) of the timer.
-        :param clock: The clock which the timer gets time from.
         :param callback: A user-defined callback function that is called when the timer expires.
         :param callback_group: The callback group for the timer. If ``None``, then the
             default callback group for the node is used.
+        :param timer_period_ns: The period (in nanoseconds) of the timer.
+        :param clock: The clock which the timer gets time from.
         :param context: The context to be associated with.
         :param autostart: Whether to automatically start the timer after creation; defaults to
             ``True``.
         """
         super().__init__(
+            callback=callback,
             timer_period_ns=timer_period_ns,
             clock=clock,
             context=context,
             autostart=autostart,
-            on_destroy=on_destroy,
+            on_destroy=on_destroy
         )
-        self.callback = callback
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False

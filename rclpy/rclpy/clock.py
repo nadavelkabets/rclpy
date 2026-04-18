@@ -170,7 +170,7 @@ class BaseClock:
     def now(self) -> Time:
         """Return the current time of this clock."""
         with self.handle:
-            rcl_time = self.handle.get_now()
+            rcl_time = self.__clock.get_now()
         return Time(nanoseconds=rcl_time.nanoseconds, clock_type=self.clock_type)
 
     def create_jump_callback(

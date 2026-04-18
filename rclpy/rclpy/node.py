@@ -2519,8 +2519,7 @@ class Node(BaseNode):
         if clock is None:
             clock = self._clock
         timer = Timer(
-            timer_period_nsec, clock,
-            callback=callback,
+            callback, timer_period_nsec, clock,
             callback_group=callback_group,
             on_destroy=self._on_destroy_timer,
             context=self.context,

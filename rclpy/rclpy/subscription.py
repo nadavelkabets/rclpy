@@ -70,17 +70,56 @@ SubscriptionCallbackUnion: TypeAlias = Union[GenericSubscriptionCallbackUnion[Ms
 
 
 class BaseSubscription(Generic[MsgT]):
-    """Shared state and query methods for subscriptions (executor and async)."""
 
     class CallbackType(Enum):
         MessageOnly = 0
         WithMessageInfo = 1
+
+    @overload
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: GenericSubscriptionCallbackUnion[bytes],
+         qos_profile: QoSProfile,
+         raw: Literal[True],
+         *,
+         on_destroy: Optional[Callable[['BaseSubscription[MsgT]'], None]] = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: GenericSubscriptionCallbackUnion[MsgT],
+         qos_profile: QoSProfile,
+         raw: Literal[False],
+         *,
+         on_destroy: Optional[Callable[['BaseSubscription[MsgT]'], None]] = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+         self,
+         subscription_impl: '_rclpy.Subscription[MsgT]',
+         msg_type: Type[MsgT],
+         topic: str,
+         callback: SubscriptionCallbackUnion[MsgT],
+         qos_profile: QoSProfile,
+         raw: bool,
+         *,
+         on_destroy: Optional[Callable[['BaseSubscription[MsgT]'], None]] = None,
+    ) -> None: ...
 
     def __init__(
          self,
          subscription_impl: '_rclpy.Subscription[MsgT]',
          msg_type: Type[MsgT],
          topic: str,
+         callback: SubscriptionCallbackUnion[MsgT],
          qos_profile: QoSProfile,
          raw: bool,
          *,
@@ -95,31 +134,11 @@ class BaseSubscription(Generic[MsgT]):
         self.__subscription = subscription_impl
         self.msg_type = msg_type
         self.topic = topic
+        self.callback = callback
         self.qos_profile = qos_profile
         self.raw = raw
         self._on_destroy = on_destroy
         self._destroyed = False
-
-    @property
-    def handle(self) -> '_rclpy.Subscription[MsgT]':
-        return self.__subscription
-
-    @staticmethod
-    def _detect_callback_type(callback: Callable) -> 'BaseSubscription.CallbackType':
-        """Detect whether a callback accepts (msg) or (msg, info)."""
-        try:
-            inspect.signature(callback).bind(object())
-            return BaseSubscription.CallbackType.MessageOnly
-        except TypeError:
-            pass
-        try:
-            inspect.signature(callback).bind(object(), object())
-            return BaseSubscription.CallbackType.WithMessageInfo
-        except TypeError:
-            pass
-        raise RuntimeError(
-            'Subscription callback should be callable with one argument '
-            '(message only) or two (message and message info)')
 
     def get_publisher_count(self) -> int:
         """Get the number of publishers that this subscription has."""
@@ -127,9 +146,52 @@ class BaseSubscription(Generic[MsgT]):
             return self.__subscription.get_publisher_count()
 
     @property
+    def handle(self) -> '_rclpy.Subscription[MsgT]':
+        return self.__subscription
+
+    def destroy(self) -> None:
+        """Destroy the subscription, notifying the owning node and releasing the handle."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._on_destroy is not None:
+            self._on_destroy(self)
+            self._on_destroy = None
+        self._destroy()
+
+    def _destroy(self) -> None:
+        self.handle.destroy_when_not_in_use()
+
+    @property
     def topic_name(self) -> str:
         with self.handle:
             return self.__subscription.get_topic_name()
+
+    @property
+    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
+        return self._callback
+
+    @callback.setter
+    def callback(self, value: SubscriptionCallbackUnion[MsgT]) -> None:
+        self._set_callback_type(value)
+        self._callback = value
+
+    def _set_callback_type(self, callback: SubscriptionCallbackUnion[MsgT]) -> None:
+        try:
+            inspect.signature(callback).bind(object())
+            self._callback_type = BaseSubscription.CallbackType.MessageOnly
+            return
+        except TypeError:
+            pass
+        try:
+            inspect.signature(callback).bind(object(), object())
+            self._callback_type = BaseSubscription.CallbackType.WithMessageInfo
+            return
+        except TypeError:
+            pass
+        raise RuntimeError(
+            'Subscription callback should be either be callable with one argument'
+            '(to get only the message) or two (to get message and message info)')
 
     @property
     def logger_name(self) -> str:
@@ -170,19 +232,6 @@ class BaseSubscription(Generic[MsgT]):
         """
         with self.handle:
             return self.__subscription.get_content_filter()
-
-    def destroy(self) -> None:
-        """Destroy the subscription, notifying the owning node and releasing the handle."""
-        if self._destroyed:
-            return
-        self._destroyed = True
-        if self._on_destroy is not None:
-            self._on_destroy(self)
-            self._on_destroy = None
-        self._destroy()
-
-    def _destroy(self) -> None:
-        self.handle.destroy_when_not_in_use()
 
     def __enter__(self) -> Self:
         return self
@@ -278,26 +327,17 @@ class Subscription(BaseSubscription[MsgT], Generic[MsgT]):
             subscription_impl=subscription_impl,
             msg_type=msg_type,
             topic=topic,
+            callback=callback,
             qos_profile=qos_profile,
-            raw=raw,
-            on_destroy=on_destroy,
+            raw=raw
         )
-        self.callback = callback
+        self._on_destroy = on_destroy
         self.callback_group = callback_group
         # True when the callback is ready to fire but has not been "taken" by an executor
         self._executor_event = False
 
         self.event_handlers = event_callbacks.create_event_handlers(
             callback_group, subscription_impl, topic)
-
-    @property
-    def callback(self) -> SubscriptionCallbackUnion[MsgT]:
-        return self._callback
-
-    @callback.setter
-    def callback(self, value: SubscriptionCallbackUnion[MsgT]) -> None:
-        self._callback_type = self._detect_callback_type(value)
-        self._callback = value
 
     def _destroy(self) -> None:
         for handler in self.event_handlers:
