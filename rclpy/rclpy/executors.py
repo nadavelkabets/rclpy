@@ -1077,6 +1077,13 @@ class MultiThreadedExecutor(Executor):
         self._executor = ThreadPoolExecutor(num_threads)
         self._futures_lock = Lock()
 
+    def _clear_done_tasks_and_propagate_exceptions(self):
+        with self._futures_lock:
+            for future in self._futures[:]:
+                if future.done():
+                    self._futures.remove(future)
+                    future.result()  # raise any exceptions
+
     def _spin_once_impl(
         self,
         timeout_sec: Optional[Union[float, TimeoutObject]] = None,
@@ -1096,11 +1103,8 @@ class MultiThreadedExecutor(Executor):
         else:
             self._executor.submit(handler)
             self._futures.append(handler)
-            with self._futures_lock:
-                for future in self._futures:
-                    if future.done():
-                        self._futures.remove(future)
-                        future.result()  # raise any exceptions
+
+            self._clear_done_tasks_and_propagate_exceptions()
 
             # Yield GIL so executor threads have a chance to run.
             os.sched_yield() if hasattr(os, 'sched_yield') else time.sleep(0)
@@ -1152,3 +1156,12 @@ class MultiThreadedExecutor(Executor):
         success: bool = super().shutdown(timeout_sec)
         self._executor.shutdown(wait=wait_for_threads)
         return success
+
+    def spin_until_future_complete(
+        self,
+        future: Future[Any],
+        timeout_sec: Optional[float] = None
+    ) -> None:
+        """Execute callbacks until a given future is done or a timeout occurs."""
+        super().spin_until_future_complete(future, timeout_sec)
+        self._clear_done_tasks_and_propagate_exceptions()
