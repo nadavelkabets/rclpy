@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import asyncio
+import os
 
 import pytest
 
 import rclpy
 from rclpy.experimental import AsyncNode
+from rclpy.qos import HistoryPolicy
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
 
 from test_msgs.srv import BasicTypes as BasicTypesSrv
 
@@ -110,3 +114,72 @@ async def test_service_destroy_cancels_in_flight_handler(concurrent):
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.5):
                 await call_task
+
+
+def _open_socket_count() -> int:
+    count = 0
+    for fd in os.listdir('/proc/self/fd'):
+        try:
+            if os.readlink(f'/proc/self/fd/{fd}').startswith('socket:'):
+                count += 1
+        except OSError:
+            pass
+    return count
+
+
+@pytest.mark.asyncio
+async def test_service_burst_all_answered():
+    """Every request in a burst is answered and every response reaches its caller."""
+    num_calls = 500
+    qos = QoSProfile(
+        reliability=ReliabilityPolicy.RELIABLE,
+        history=HistoryPolicy.KEEP_LAST,
+        depth=num_calls,
+    )
+
+    def handler(request, response):
+        response.int32_value = request.int32_value
+        return response
+
+    async with (
+        AsyncNode('test_srv_burst_srv_node') as srv_node,
+        AsyncNode('test_srv_burst_client_node') as client_node,
+    ):
+        srv_node.create_service(
+            BasicTypesSrv, '/test_srv_burst_svc', handler, qos_profile=qos)
+        client = client_node.create_client(
+            BasicTypesSrv, '/test_srv_burst_svc', qos_profile=qos)
+
+        async with asyncio.timeout(10):
+            await client.wait_for_service()
+            # The calls send their requests before the service's reader runs, so request and
+            # response wakeup bytes pile up past the socket buffer.
+            responses = await asyncio.gather(*(
+                client.call(BasicTypesSrv.Request(int32_value=i)) for i in range(num_calls)))
+
+    assert [response.int32_value for response in responses] == list(range(num_calls))
+
+
+@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='needs /proc')
+@pytest.mark.asyncio
+async def test_service_destroy_releases_sockets():
+    """Creating and destroying services leaves no wakeup sockets behind."""
+    def handler(request, response):
+        return response
+
+    async with AsyncNode('test_srv_sockets_node') as node:
+        # Warm up so sockets the middleware opens lazily are part of the baseline.
+        srv = node.create_service(BasicTypesSrv, '/test_srv_sockets_warmup', handler)
+        await asyncio.sleep(0.1)
+        srv.destroy()
+        await asyncio.sleep(0.1)
+        baseline = _open_socket_count()
+
+        for i in range(100):
+            srv = node.create_service(BasicTypesSrv, f'/test_srv_sockets_{i}', handler)
+            await asyncio.sleep(0.01)  # let the reader open and attach its wakeup socket
+            srv.destroy()
+        await asyncio.sleep(0.1)
+
+        # A leak would add at least 100 sockets. Allow a little middleware noise.
+        assert _open_socket_count() <= baseline + 10

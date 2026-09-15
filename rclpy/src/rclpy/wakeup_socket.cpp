@@ -1,0 +1,60 @@
+// Copyright 2026 Open Source Robotics Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#include <cstddef>
+#include <cstdint>
+
+#include "wakeup_socket.hpp"
+
+namespace rclpy
+{
+extern "C" void WakeupSocketTrampoline(const void * user_data, size_t /*number_of_events*/)
+{
+  const char byte = 1;
+  const auto handle = reinterpret_cast<std::uintptr_t>(user_data);
+#ifdef _WIN32
+  (void)::send(static_cast<SOCKET>(handle), &byte, 1, 0);
+#elif defined(MSG_NOSIGNAL)
+  (void)::send(static_cast<int>(handle), &byte, 1, MSG_NOSIGNAL);
+#else
+  // No MSG_NOSIGNAL on macOS: SO_NOSIGPIPE was set by wakeup_socket_user_data().
+  (void)::send(static_cast<int>(handle), &byte, 1, 0);
+#endif
+}
+
+const void * wakeup_socket_user_data(std::uintptr_t handle)
+{
+#ifdef __APPLE__
+  int one = 1;
+  (void)::setsockopt(static_cast<int>(handle), SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+  return reinterpret_cast<const void *>(handle);
+}
+
+void close_wakeup_socket(std::uintptr_t handle)
+{
+#ifdef _WIN32
+  (void)::closesocket(static_cast<SOCKET>(handle));
+#else
+  (void)::close(static_cast<int>(handle));
+#endif
+}
+}  // namespace rclpy

@@ -22,12 +22,14 @@
 #include <rcl/service_introspection.h>
 #include <rmw/types.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
 #include "clock.hpp"
 #include "destroyable.hpp"
 #include "node.hpp"
+#include "wakeup_socket.hpp"
 
 namespace py = pybind11;
 
@@ -52,7 +54,14 @@ public:
    */
   Client(Node & node, py::object pysrv_type, const std::string & service_name, py::object pyqos);
 
-  ~Client() = default;
+  /// Copy a client. The copy shares the rcl client but never owns the wakeup socket.
+  Client(const Client & other);
+
+  Client &
+  operator=(const Client & other) = delete;
+
+  /// Clear and close the wakeup socket if destroy() was never called.
+  ~Client() override;
 
   /// Publish a request message
   /**
@@ -127,9 +136,27 @@ public:
   void
   clear_on_new_response_callback();
 
+  /// Wake the event loop by writing one byte to a socket for each new response.
+  /**
+   * Takes ownership of \p handle, a non-blocking socket such as one returned by socket.detach().
+   * It is closed by clear_on_new_response_wakeup(), destroy() or the destructor, always after the
+   * rmw callback has been cleared. Replaces any on new response callback.
+   *
+   * \param[in] handle Write end of a socket pair.
+   * \throws RCLError if the callback could not be set, in which case \p handle is closed.
+   */
+  void
+  set_on_new_response_wakeup(std::uintptr_t handle);
+
+  /// Clear the rmw callback, then close the wakeup socket. Does nothing if none is attached.
+  void
+  clear_on_new_response_wakeup();
+
 private:
   Node node_;
   std::function<void(size_t)> on_new_response_callback_{nullptr};
+  /// Owned write end of the wakeup socket. Copies never own it.
+  std::uintptr_t wakeup_handle_{kInvalidWakeupSocket};
   std::shared_ptr<rcl_client_t> rcl_client_;
   rosidl_service_type_support_t * srv_type_;
 

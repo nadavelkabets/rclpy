@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import os
 
 import pytest
 
@@ -153,3 +154,60 @@ async def test_client_destroy_cancels_in_flight_call():
 
             with pytest.raises(asyncio.CancelledError):
                 await client.call(BasicTypesSrv.Request())
+
+
+def _open_socket_count() -> int:
+    count = 0
+    for fd in os.listdir('/proc/self/fd'):
+        try:
+            if os.readlink(f'/proc/self/fd/{fd}').startswith('socket:'):
+                count += 1
+        except OSError:
+            pass
+    return count
+
+
+@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='needs /proc')
+@pytest.mark.asyncio
+async def test_client_destroy_releases_sockets():
+    """Creating and destroying clients leaves no wakeup sockets behind."""
+    async with AsyncNode('test_client_sockets_node') as node:
+        # Warm up so sockets the middleware opens lazily are part of the baseline.
+        client = node.create_client(BasicTypesSrv, '/test_client_sockets_warmup')
+        await asyncio.sleep(0.1)
+        client.destroy()
+        await asyncio.sleep(0.1)
+        baseline = _open_socket_count()
+
+        for i in range(100):
+            client = node.create_client(BasicTypesSrv, f'/test_client_sockets_{i}')
+            await asyncio.sleep(0.01)  # let the reader open and attach its wakeup socket
+            client.destroy()
+        await asyncio.sleep(0.1)
+
+        # A leak would add at least 100 sockets. Allow a little middleware noise.
+        assert _open_socket_count() <= baseline + 10
+
+
+@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='needs /proc')
+@pytest.mark.asyncio
+async def test_node_exit_releases_sockets():
+    """An AsyncNode's built-in services hold wakeup sockets, and exiting the node closes them."""
+    async with AsyncNode('test_node_sockets_warmup'):
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.1)
+    baseline = _open_socket_count()
+
+    async with AsyncNode('test_node_sockets_probe'):
+        await asyncio.sleep(0.1)
+        # 7 built-in services (6 parameter services and type description), both ends of each pair.
+        assert _open_socket_count() >= baseline + 14
+    await asyncio.sleep(0.1)
+
+    for i in range(20):
+        async with AsyncNode(f'test_node_sockets_{i}'):
+            await asyncio.sleep(0.05)
+    await asyncio.sleep(0.1)
+
+    # A leak would add at least 14 sockets per node. Allow a little middleware noise.
+    assert _open_socket_count() <= baseline + 10

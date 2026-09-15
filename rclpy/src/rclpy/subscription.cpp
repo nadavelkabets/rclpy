@@ -36,6 +36,7 @@
 #include "serialization.hpp"
 #include "subscription.hpp"
 #include "utils.hpp"
+#include "wakeup_socket.hpp"
 #include "events_executor/rcl_support.hpp"
 
 using pybind11::literals::operator""_a;
@@ -139,10 +140,30 @@ Subscription::Subscription(
   }
 }
 
+Subscription::Subscription(const Subscription & other)
+: Destroyable(other), std::enable_shared_from_this<Subscription>(),
+  node_(other.node_), on_new_message_callback_(other.on_new_message_callback_),
+  rcl_subscription_(other.rcl_subscription_)
+{
+  // wakeup_handle_ keeps its default: only the original owns and closes the wakeup socket.
+}
+
+Subscription::~Subscription()
+{
+  try {
+    clear_on_new_message_wakeup();
+  } catch (const rclpy::RCLError &) {
+  }
+}
+
 void Subscription::destroy()
 {
   try {
     clear_on_new_message_callback();
+  } catch (const rclpy::RCLError &) {
+  }
+  try {
+    clear_on_new_message_wakeup();
   } catch (const rclpy::RCLError &) {
   }
   rcl_subscription_.reset();
@@ -271,6 +292,7 @@ Subscription::set_callback(
 void
 Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
 {
+  clear_on_new_message_wakeup();
   clear_on_new_message_callback();
   on_new_message_callback_ = std::move(callback);
   set_callback(
@@ -285,6 +307,37 @@ Subscription::clear_on_new_message_callback()
     set_callback(nullptr, nullptr);
     on_new_message_callback_ = nullptr;
   }
+}
+
+void
+Subscription::set_on_new_message_wakeup(std::uintptr_t handle)
+{
+  if (kInvalidWakeupSocket == handle) {
+    throw py::value_error("invalid wakeup socket handle");
+  }
+  try {
+    clear_on_new_message_callback();
+    clear_on_new_message_wakeup();
+    // rmw may call the trampoline right here if messages are already waiting; that is fine.
+    set_callback(WakeupSocketTrampoline, wakeup_socket_user_data(handle));
+  } catch (...) {
+    close_wakeup_socket(handle);  // ownership was transferred on entry
+    throw;
+  }
+  wakeup_handle_ = handle;
+}
+
+void
+Subscription::clear_on_new_message_wakeup()
+{
+  if (kInvalidWakeupSocket == wakeup_handle_) {
+    return;
+  }
+  // rmw holds the same mutex while calling the callback, so once this returns no trampoline
+  // call is in flight and closing the handle cannot send a byte to a reused fd number.
+  // If clearing throws, the handle is deliberately left open.
+  set_callback(nullptr, nullptr);
+  close_wakeup_socket(std::exchange(wakeup_handle_, kInvalidWakeupSocket));
 }
 
 bool
@@ -407,6 +460,10 @@ define_subscription(py::object module)
     "set_on_new_message_callback", &Subscription::set_on_new_message_callback,
     py::arg("callback"))
   .def("clear_on_new_message_callback", &Subscription::clear_on_new_message_callback)
+  .def(
+    "set_on_new_message_wakeup", &Subscription::set_on_new_message_wakeup,
+    py::arg("handle"))
+  .def("clear_on_new_message_wakeup", &Subscription::clear_on_new_message_wakeup)
   .def("is_cft_supported", &Subscription::is_cft_supported,
     "Check if subscription instance supports content filtering.")
   .def("is_cft_enabled", &Subscription::is_cft_enabled,

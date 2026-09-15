@@ -29,17 +29,38 @@
 #include "node.hpp"
 #include "service.hpp"
 #include "utils.hpp"
+#include "wakeup_socket.hpp"
 #include "events_executor/rcl_support.hpp"
 
 namespace rclpy
 {
 using events_executor::RclEventCallbackTrampoline;
 
+Service::Service(const Service & other)
+: Destroyable(other), std::enable_shared_from_this<Service>(),
+  node_(other.node_), on_new_request_callback_(other.on_new_request_callback_),
+  rcl_service_(other.rcl_service_), srv_type_(other.srv_type_)
+{
+  // wakeup_handle_ keeps its default: only the original owns and closes the wakeup socket.
+}
+
+Service::~Service()
+{
+  try {
+    clear_on_new_request_wakeup();
+  } catch (const rclpy::RCLError &) {
+  }
+}
+
 void
 Service::destroy()
 {
   try {
     clear_on_new_request_callback();
+  } catch (const rclpy::RCLError &) {
+  }
+  try {
+    clear_on_new_request_wakeup();
   } catch (const rclpy::RCLError &) {
   }
   rcl_service_.reset();
@@ -210,6 +231,7 @@ Service::set_callback(
 void
 Service::set_on_new_request_callback(std::function<void(size_t)> callback)
 {
+  clear_on_new_request_wakeup();
   clear_on_new_request_callback();
   on_new_request_callback_ = std::move(callback);
   set_callback(
@@ -224,6 +246,37 @@ Service::clear_on_new_request_callback()
     set_callback(nullptr, nullptr);
     on_new_request_callback_ = nullptr;
   }
+}
+
+void
+Service::set_on_new_request_wakeup(std::uintptr_t handle)
+{
+  if (kInvalidWakeupSocket == handle) {
+    throw py::value_error("invalid wakeup socket handle");
+  }
+  try {
+    clear_on_new_request_callback();
+    clear_on_new_request_wakeup();
+    // rmw may call the trampoline right here if requests are already waiting; that is fine.
+    set_callback(WakeupSocketTrampoline, wakeup_socket_user_data(handle));
+  } catch (...) {
+    close_wakeup_socket(handle);  // ownership was transferred on entry
+    throw;
+  }
+  wakeup_handle_ = handle;
+}
+
+void
+Service::clear_on_new_request_wakeup()
+{
+  if (kInvalidWakeupSocket == wakeup_handle_) {
+    return;
+  }
+  // rmw holds the same mutex while calling the callback, so once this returns no trampoline
+  // call is in flight and closing the handle cannot send a byte to a reused fd number.
+  // If clearing throws, the handle is deliberately left open.
+  set_callback(nullptr, nullptr);
+  close_wakeup_socket(std::exchange(wakeup_handle_, kInvalidWakeupSocket));
 }
 
 void
@@ -257,6 +310,10 @@ define_service(py::object module)
   .def(
     "set_on_new_request_callback", &Service::set_on_new_request_callback,
     py::arg("callback"))
-  .def("clear_on_new_request_callback", &Service::clear_on_new_request_callback);
+  .def("clear_on_new_request_callback", &Service::clear_on_new_request_callback)
+  .def(
+    "set_on_new_request_wakeup", &Service::set_on_new_request_wakeup,
+    py::arg("handle"))
+  .def("clear_on_new_request_wakeup", &Service::clear_on_new_request_wakeup);
 }
 }  // namespace rclpy
