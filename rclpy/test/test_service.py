@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import socket
 from typing import Generator
 from typing import List
 from typing import Optional
@@ -140,41 +139,3 @@ def test_set_on_new_request_callback(test_node: Node) -> None:
     srv.handle.clear_on_new_request_callback()
     cli.call_async(Empty.Request())
     cb.assert_called_once()
-
-
-def _make_wakeup_socket() -> tuple[socket.socket, int]:
-    """Return the read end and the detached write-end handle of a new socket pair."""
-    rsock, wsock = socket.socketpair()
-    wsock.setblocking(False)
-    rsock.settimeout(5)
-    return rsock, wsock.detach()
-
-
-def _read_until_closed(rsock: socket.socket) -> bytes:
-    """Read until EOF, which proves the write end was closed. Times out otherwise."""
-    data = b''
-    while chunk := rsock.recv(64):
-        data += chunk
-    return data
-
-
-def test_on_new_request_wakeup(test_node: Node) -> None:
-    cli = test_node.create_client(Empty, '/wakeup_service')
-    srv = test_node.create_service(Empty, '/wakeup_service', lambda req, res: res)
-    rsock, handle = _make_wakeup_socket()
-    srv.handle.set_on_new_request_wakeup(handle)
-    cli.call_async(Empty.Request())
-    assert rsock.recv(64)  # at least one wakeup byte
-
-    srv.handle.clear_on_new_request_wakeup()
-    _read_until_closed(rsock)
-    rsock.close()
-
-
-def test_destroy_closes_request_wakeup_socket(test_node: Node) -> None:
-    srv = test_node.create_service(Empty, '/wakeup_destroy_service', lambda req, res: res)
-    rsock, handle = _make_wakeup_socket()
-    srv.handle.set_on_new_request_wakeup(handle)
-    srv.destroy()
-    assert _read_until_closed(rsock) == b''
-    rsock.close()

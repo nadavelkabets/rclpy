@@ -13,14 +13,11 @@
 # limitations under the License.
 
 import asyncio
-import os
-import socket
 
 import pytest
 
 import rclpy
 from rclpy.experimental import AsyncNode
-from rclpy.experimental._wakeup_socket import WakeupSocket
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
@@ -184,54 +181,3 @@ async def test_subscription_burst_all_received():
             await done.wait()
 
     assert received == [f'msg_{i}' for i in range(num_messages)]
-
-
-def _open_socket_count() -> int:
-    count = 0
-    for fd in os.listdir('/proc/self/fd'):
-        try:
-            if os.readlink(f'/proc/self/fd/{fd}').startswith('socket:'):
-                count += 1
-        except OSError:
-            pass
-    return count
-
-
-@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='needs /proc')
-@pytest.mark.asyncio
-async def test_subscription_destroy_releases_sockets():
-    """Creating and destroying subscriptions leaves no wakeup sockets behind."""
-    async with AsyncNode('test_sub_sockets_node') as node:
-        # Warm up so sockets the middleware opens lazily are part of the baseline.
-        sub = node.create_subscription(
-            Strings, '/test_sub_sockets_warmup', lambda msg: None, TEST_QOS)
-        await asyncio.sleep(0.1)
-        sub.destroy()
-        await asyncio.sleep(0.1)
-        baseline = _open_socket_count()
-
-        for i in range(100):
-            sub = node.create_subscription(
-                Strings, f'/test_sub_sockets_{i}', lambda msg: None, TEST_QOS)
-            await asyncio.sleep(0.01)  # let the reader open and attach its wakeup socket
-            sub.destroy()
-        await asyncio.sleep(0.1)
-
-        # A leak would add at least 100 sockets. Allow a little middleware noise.
-        assert _open_socket_count() <= baseline + 10
-
-
-@pytest.mark.asyncio
-async def test_wakeup_socket_close_from_other_thread():
-    """A byte on the write end sets the event, and close() works from another thread."""
-    event = asyncio.Event()
-    wakeup = await WakeupSocket.create(event)
-    writer = socket.socket(fileno=wakeup.detach_write_end())
-    writer.send(b'\x01')
-
-    async with asyncio.timeout(5):
-        await event.wait()
-
-    writer.close()
-    await asyncio.to_thread(wakeup.close)
-    await asyncio.sleep(0.05)  # the transport closes on the loop

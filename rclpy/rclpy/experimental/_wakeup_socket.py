@@ -14,7 +14,6 @@
 
 import asyncio
 import socket
-from typing import Optional
 
 
 class _WakeProtocol(asyncio.Protocol):
@@ -30,8 +29,8 @@ class WakeupSocket:
     """
     Sets an asyncio.Event from rmw threads without taking the GIL.
 
-    The rmw callback writes one byte to the write end, which is handed to C++ with
-    detach_write_end(). The event loop reads the other end.
+    The rmw callback writes one byte to the write end, whose handle is fileno(), and the event
+    loop reads the other end. Clear the rmw callback before calling close().
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop, transport: asyncio.BaseTransport,
@@ -39,7 +38,7 @@ class WakeupSocket:
         self._loop = loop
         self._transport = transport
         self._rsock = rsock
-        self._wsock: Optional[socket.socket] = wsock
+        self._wsock = wsock
 
     @classmethod
     async def create(cls, event: asyncio.Event) -> 'WakeupSocket':
@@ -59,18 +58,13 @@ class WakeupSocket:
             raise
         return cls(loop, transport, rsock, wsock)
 
-    def detach_write_end(self) -> int:
-        """Give up the write end. The caller becomes responsible for closing it."""
-        assert self._wsock is not None
-        handle = self._wsock.detach()
-        self._wsock = None
-        return handle
+    def fileno(self) -> int:
+        """Return the handle of the write end, for the rmw callback."""
+        return self._wsock.fileno()
 
     def close(self) -> None:
-        """Close the read end, and the write end if it was never detached. Any thread."""
-        if self._wsock is not None:
-            self._wsock.close()
-            self._wsock = None
+        """Close both ends, from any thread, after the rmw callback has been cleared."""
+        self._wsock.close()
         try:
             on_loop = asyncio.get_running_loop() is self._loop
         except RuntimeError:

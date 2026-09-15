@@ -30,7 +30,6 @@
 #include "destroyable.hpp"
 #include "node.hpp"
 #include "utils.hpp"
-#include "wakeup_socket.hpp"
 
 namespace py = pybind11;
 
@@ -61,14 +60,7 @@ public:
   Service(
     Node & node, std::shared_ptr<rcl_service_t> rcl_service);
 
-  /// Copy a service. The copy shares the rcl service but never owns the wakeup socket.
-  Service(const Service & other);
-
-  Service &
-  operator=(const Service & other) = delete;
-
-  /// Clear and close the wakeup socket if destroy() was never called.
-  ~Service() override;
+  ~Service() = default;
 
   /// Publish a response message
   /**
@@ -141,27 +133,17 @@ public:
   void
   clear_on_new_request_callback();
 
-  /// Wake the event loop by writing one byte to a socket for each new request.
+  /// Write one byte to socket \p handle for each new request, without taking the GIL.
   /**
-   * Takes ownership of \p handle, a non-blocking socket such as one returned by socket.detach().
-   * It is closed by clear_on_new_request_wakeup(), destroy() or the destructor, always after the
-   * rmw callback has been cleared. Replaces any on new request callback.
-   *
-   * \param[in] handle Write end of a socket pair.
-   * \throws RCLError if the callback could not be set, in which case \p handle is closed.
+   * \p handle must be a non-blocking socket, and stays owned by the caller: call
+   * clear_on_new_request_callback() before closing it. Replaces any on new request callback.
    */
   void
   set_on_new_request_wakeup(std::uintptr_t handle);
 
-  /// Clear the rmw callback, then close the wakeup socket. Does nothing if none is attached.
-  void
-  clear_on_new_request_wakeup();
-
 private:
   Node node_;
   std::function<void(size_t)> on_new_request_callback_{nullptr};
-  /// Owned write end of the wakeup socket. Copies never own it.
-  std::uintptr_t wakeup_handle_{kInvalidWakeupSocket};
   std::shared_ptr<rcl_service_t> rcl_service_;
   rosidl_service_type_support_t * srv_type_;
 

@@ -55,9 +55,8 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     def _destroy(self) -> None:
         if self._task is not None:
             self._task.cancel()
-        # Clear the rmw callback before the handle is destroyed. C++ closes the write end of
-        # the wakeup socket right after the clear; the read end is closed here.
-        self.handle.clear_on_new_message_wakeup()
+        # Clear the rmw callback before closing the wakeup socket and destroying the handle.
+        self.handle.clear_on_new_message_callback()
         if self._wakeup is not None:
             self._wakeup.close()
             self._wakeup = None
@@ -71,7 +70,7 @@ class AsyncSubscription(BaseSubscription[MsgT]):
             self._wakeup.close()
             self._wakeup = None
             return
-        self.handle.set_on_new_message_wakeup(self._wakeup.detach_write_end())
+        self.handle.set_on_new_message_wakeup(self._wakeup.fileno())
         while not self._destroyed:
             msg_and_info = self.handle.take_message(
                 self.msg_type, self.raw)

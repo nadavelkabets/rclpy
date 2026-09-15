@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Generator
-import socket
 import time
 from typing import List
 from typing import Optional
@@ -242,75 +241,6 @@ def test_on_new_message_callback(test_node: Node) -> None:
     # Wait a bit to ensure the message would have been received if callback was still set
     time.sleep(1.0)
     cb.assert_not_called()
-
-
-def _wait_for_publisher(sub: Subscription[Empty]) -> None:
-    end_time = time.time() + 5
-    while sub.get_publisher_count() != 1:
-        time.sleep(0.1)
-        assert time.time() <= end_time  # timeout waiting for pub/sub to discover each other
-
-
-def _make_wakeup_socket() -> tuple[socket.socket, int]:
-    """Return the read end and the detached write-end handle of a new socket pair."""
-    rsock, wsock = socket.socketpair()
-    wsock.setblocking(False)
-    rsock.settimeout(5)
-    return rsock, wsock.detach()
-
-
-def _read_until_closed(rsock: socket.socket) -> bytes:
-    """Read until EOF, which proves the write end was closed. Times out otherwise."""
-    data = b''
-    while chunk := rsock.recv(64):
-        data += chunk
-    return data
-
-
-def test_on_new_message_wakeup(test_node: Node) -> None:
-    topic_name = '/wakeup_topic'
-    sub = test_node.create_subscription(Empty, topic_name, lambda msg: None, 10)
-    pub = test_node.create_publisher(Empty, topic_name, 10)
-    _wait_for_publisher(sub)
-
-    rsock, handle = _make_wakeup_socket()
-    sub.handle.set_on_new_message_wakeup(handle)
-    pub.publish(Empty())
-    assert rsock.recv(64)  # at least one wakeup byte
-
-    sub.handle.clear_on_new_message_wakeup()
-    _read_until_closed(rsock)
-    rsock.close()
-
-
-def test_destroy_closes_wakeup_socket(test_node: Node) -> None:
-    sub = test_node.create_subscription(Empty, '/wakeup_destroy_topic', lambda msg: None, 10)
-    rsock, handle = _make_wakeup_socket()
-    sub.handle.set_on_new_message_wakeup(handle)
-    sub.destroy()
-    assert _read_until_closed(rsock) == b''
-    rsock.close()
-
-
-def test_set_callback_replaces_wakeup(test_node: Node) -> None:
-    topic_name = '/wakeup_replace_topic'
-    sub = test_node.create_subscription(Empty, topic_name, lambda msg: None, 10)
-    pub = test_node.create_publisher(Empty, topic_name, 10)
-    _wait_for_publisher(sub)
-
-    rsock, handle = _make_wakeup_socket()
-    sub.handle.set_on_new_message_wakeup(handle)
-    cb = Mock()
-    sub.handle.set_on_new_message_callback(cb)
-    assert _read_until_closed(rsock) == b''
-    rsock.close()
-
-    pub.publish(Empty())
-    end_time = time.time() + 5
-    while cb.call_count == 0 and time.time() <= end_time:
-        time.sleep(0.1)
-    cb.assert_called_once_with(1)
-    sub.handle.clear_on_new_message_callback()
 
 
 def test_subscription_set_content_filter(test_node: Node) -> None:

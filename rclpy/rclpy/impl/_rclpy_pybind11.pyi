@@ -213,10 +213,7 @@ class Client(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         """Clear the on new response callback function for the client."""
 
     def set_on_new_response_wakeup(self, handle: int) -> None:
-        """Write one byte to socket ``handle`` on each new response; takes ownership of it."""
-
-    def clear_on_new_response_wakeup(self) -> None:
-        """Stop the socket wakeup and close its handle."""
+        """Write one byte to non-blocking socket ``handle`` on each new response."""
 
 
 class Context(Destroyable):
@@ -316,10 +313,7 @@ class Service(Destroyable, Generic[SrvRequestT, SrvResponseT]):
         """Clear the on new request callback function for the service."""
 
     def set_on_new_request_wakeup(self, handle: int) -> None:
-        """Write one byte to socket ``handle`` on each new request; takes ownership of it."""
-
-    def clear_on_new_request_wakeup(self) -> None:
-        """Stop the socket wakeup and close its handle."""
+        """Write one byte to non-blocking socket ``handle`` on each new request."""
 
 
 class TypeDescriptionService(Destroyable):
@@ -662,10 +656,7 @@ class Subscription(Destroyable, Generic[MsgT]):
         """Clear the on new message callback function for the subscription."""
 
     def set_on_new_message_wakeup(self, handle: int) -> None:
-        """Write one byte to socket ``handle`` on each new message; takes ownership of it."""
-
-    def clear_on_new_message_wakeup(self) -> None:
-        """Stop the socket wakeup and close its handle."""
+        """Write one byte to non-blocking socket ``handle`` on each new message."""
 
     def is_cft_supported(self) -> bool:
         """Check if content filtering is supported for this subscription."""

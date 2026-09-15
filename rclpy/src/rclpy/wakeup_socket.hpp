@@ -16,25 +16,15 @@
 #define RCLPY__WAKEUP_SOCKET_HPP_
 
 #include <cstddef>
-#include <cstdint>
 
 namespace rclpy
 {
-/// No socket attached. Equal to INVALID_SOCKET on Windows and to (uintptr_t)-1 on POSIX.
-constexpr std::uintptr_t kInvalidWakeupSocket = UINTPTR_MAX;
-
-/// rmw event callback that writes one byte to the socket encoded in user_data.
+/// rmw event callback that writes one byte to the socket whose handle is user_data.
 /**
- * Takes no GIL and no lock, so a middleware thread holding its own locks never blocks here.
- * A full socket buffer means a wakeup is already pending, so that write is dropped.
+ * Takes no GIL and no lock. The socket must be non-blocking: a full buffer means a wakeup is
+ * already pending, so that write is dropped.
  */
 extern "C" void WakeupSocketTrampoline(const void * user_data, size_t number_of_events);
-
-/// Encode a socket handle as rcl user_data. On macOS this also sets SO_NOSIGPIPE.
-const void * wakeup_socket_user_data(std::uintptr_t handle);
-
-/// Close a socket handle that was passed to wakeup_socket_user_data().
-void close_wakeup_socket(std::uintptr_t handle);
 }  // namespace rclpy
 
 #endif  // RCLPY__WAKEUP_SOCKET_HPP_

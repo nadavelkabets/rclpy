@@ -16,7 +16,6 @@
 #include <winsock2.h>
 #else
 #include <sys/socket.h>
-#include <unistd.h>
 #endif
 
 #include <cstddef>
@@ -32,29 +31,8 @@ extern "C" void WakeupSocketTrampoline(const void * user_data, size_t /*number_o
   const auto handle = reinterpret_cast<std::uintptr_t>(user_data);
 #ifdef _WIN32
   (void)::send(static_cast<SOCKET>(handle), &byte, 1, 0);
-#elif defined(MSG_NOSIGNAL)
-  (void)::send(static_cast<int>(handle), &byte, 1, MSG_NOSIGNAL);
 #else
-  // No MSG_NOSIGNAL on macOS: SO_NOSIGPIPE was set by wakeup_socket_user_data().
   (void)::send(static_cast<int>(handle), &byte, 1, 0);
-#endif
-}
-
-const void * wakeup_socket_user_data(std::uintptr_t handle)
-{
-#ifdef __APPLE__
-  int one = 1;
-  (void)::setsockopt(static_cast<int>(handle), SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#endif
-  return reinterpret_cast<const void *>(handle);
-}
-
-void close_wakeup_socket(std::uintptr_t handle)
-{
-#ifdef _WIN32
-  (void)::closesocket(static_cast<SOCKET>(handle));
-#else
-  (void)::close(static_cast<int>(handle));
 #endif
 }
 }  // namespace rclpy

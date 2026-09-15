@@ -64,9 +64,8 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     def _destroy(self) -> None:
         if self._task is not None:
             self._task.cancel()
-        # Clear the rmw callback before the handle is destroyed. C++ closes the write end of
-        # the wakeup socket right after the clear; the read end is closed here.
-        self.handle.clear_on_new_response_wakeup()
+        # Clear the rmw callback before closing the wakeup socket and destroying the handle.
+        self.handle.clear_on_new_response_callback()
         if self._wakeup is not None:
             self._wakeup.close()
             self._wakeup = None
@@ -95,7 +94,7 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
             self._wakeup.close()
             self._wakeup = None
             return
-        self.handle.set_on_new_response_wakeup(self._wakeup.detach_write_end())
+        self.handle.set_on_new_response_wakeup(self._wakeup.fileno())
         while not self._destroyed:
             header_and_response = self.handle.take_response(
                 self.srv_type.Response)

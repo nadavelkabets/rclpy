@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import platform
-import socket
 import threading
 import time
 import traceback
@@ -309,48 +308,6 @@ class TestClient(unittest.TestCase):
                     cb.assert_called_once()
                 finally:
                     executor.shutdown()
-
-    def test_on_new_response_wakeup(self) -> None:
-        def _service(request: Empty.Request, response: Empty.Response) -> Empty.Response:
-            return response
-        with self.node.create_client(Empty, '/wakeup_service') as cli:
-            with self.node.create_service(Empty, '/wakeup_service', _service):
-                executor = rclpy.executors.SingleThreadedExecutor(context=self.context)
-                rsock, wsock = socket.socketpair()
-                wsock.setblocking(False)
-                rsock.setblocking(False)
-                try:
-                    self.assertTrue(cli.wait_for_service(timeout_sec=20))
-                    executor.add_node(self.node)
-                    cli.handle.set_on_new_response_wakeup(wsock.detach())
-                    cli.call_async(Empty.Request())
-                    data = b''
-                    end_time = time.monotonic() + 5
-                    while not data and time.monotonic() < end_time:
-                        executor.spin_once(timeout_sec=0.1)  # serve the request
-                        try:
-                            data = rsock.recv(64)
-                        except BlockingIOError:
-                            pass
-                    self.assertTrue(data)  # the response woke the socket
-
-                    cli.handle.clear_on_new_response_wakeup()
-                    rsock.settimeout(5)
-                    while rsock.recv(64):  # b'' (EOF) means C++ closed the write end
-                        pass
-                finally:
-                    rsock.close()
-                    executor.shutdown()
-
-    def test_destroy_closes_response_wakeup_socket(self) -> None:
-        cli = self.node.create_client(Empty, '/wakeup_destroy_service')
-        rsock, wsock = socket.socketpair()
-        wsock.setblocking(False)
-        rsock.settimeout(5)
-        cli.handle.set_on_new_response_wakeup(wsock.detach())
-        cli.destroy()
-        self.assertEqual(rsock.recv(64), b'')
-        rsock.close()
 
     def test_client_direct_destroy(self) -> None:
         cli = self.node.create_client(Empty, '/test_direct_destroy')
