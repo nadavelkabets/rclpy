@@ -15,16 +15,16 @@
 #ifndef RCLPY__WAKEUP_SOCKET_HPP_
 #define RCLPY__WAKEUP_SOCKET_HPP_
 
-#include <cstddef>
+#include <cstdint>
 
 namespace rclpy
 {
-/// rmw event callback that writes one byte to the socket whose handle is user_data.
+/// Write one byte to socket \p handle without taking the GIL or any lock.
 /**
- * Takes no GIL and no lock. The socket must be non-blocking: a full buffer means a wakeup is
- * already pending, so that write is dropped.
+ * The socket must be non-blocking: a full buffer means a wakeup is already pending, so the
+ * byte is dropped.
  */
-extern "C" void WakeupSocketTrampoline(const void * user_data, size_t number_of_events);
+void send_wakeup_byte(std::uintptr_t handle);
 }  // namespace rclpy
 
 #endif  // RCLPY__WAKEUP_SOCKET_HPP_

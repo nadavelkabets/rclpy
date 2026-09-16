@@ -282,17 +282,16 @@ Subscription::set_on_new_message_callback(std::function<void(size_t)> callback)
 void
 Subscription::clear_on_new_message_callback()
 {
-  // Unconditional, so it also clears a socket wakeup, which keeps no state here. rmw holds the
-  // same mutex while calling the callback, so no call is in flight once this returns.
-  set_callback(nullptr, nullptr);
-  on_new_message_callback_ = nullptr;
+  if (on_new_message_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_message_callback_ = nullptr;
+  }
 }
 
 void
 Subscription::set_on_new_message_wakeup(std::uintptr_t handle)
 {
-  clear_on_new_message_callback();
-  set_callback(WakeupSocketTrampoline, reinterpret_cast<const void *>(handle));
+  set_on_new_message_callback([handle](size_t /*number_of_events*/) {send_wakeup_byte(handle);});
 }
 
 bool

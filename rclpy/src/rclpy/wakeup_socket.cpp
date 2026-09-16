@@ -18,17 +18,15 @@
 #include <sys/socket.h>
 #endif
 
-#include <cstddef>
 #include <cstdint>
 
 #include "wakeup_socket.hpp"
 
 namespace rclpy
 {
-extern "C" void WakeupSocketTrampoline(const void * user_data, size_t /*number_of_events*/)
+void send_wakeup_byte(std::uintptr_t handle)
 {
   const char byte = 1;
-  const auto handle = reinterpret_cast<std::uintptr_t>(user_data);
 #ifdef _WIN32
   (void)::send(static_cast<SOCKET>(handle), &byte, 1, 0);
 #else

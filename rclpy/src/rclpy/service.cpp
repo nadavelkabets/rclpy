@@ -221,17 +221,16 @@ Service::set_on_new_request_callback(std::function<void(size_t)> callback)
 void
 Service::clear_on_new_request_callback()
 {
-  // Unconditional, so it also clears a socket wakeup, which keeps no state here. rmw holds the
-  // same mutex while calling the callback, so no call is in flight once this returns.
-  set_callback(nullptr, nullptr);
-  on_new_request_callback_ = nullptr;
+  if (on_new_request_callback_) {
+    set_callback(nullptr, nullptr);
+    on_new_request_callback_ = nullptr;
+  }
 }
 
 void
 Service::set_on_new_request_wakeup(std::uintptr_t handle)
 {
-  clear_on_new_request_callback();
-  set_callback(WakeupSocketTrampoline, reinterpret_cast<const void *>(handle));
+  set_on_new_request_callback([handle](size_t /*number_of_events*/) {send_wakeup_byte(handle);});
 }
 
 void
