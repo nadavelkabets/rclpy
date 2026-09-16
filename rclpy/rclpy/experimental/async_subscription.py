@@ -65,11 +65,6 @@ class AsyncSubscription(BaseSubscription[MsgT]):
     async def _messages(self):
         """Async generator yielding (msg, msg_info) from DDS."""
         self._wakeup = await WakeupSocket.create(self._read_event)
-        if self._destroyed:
-            # Destroyed while the socket was opening.
-            self._wakeup.close()
-            self._wakeup = None
-            return
         self.handle.set_on_new_message_wakeup(self._wakeup.fileno())
         while not self._destroyed:
             msg_and_info = self.handle.take_message(

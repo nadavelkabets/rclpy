@@ -89,11 +89,6 @@ class AsyncClient(BaseClient[SrvRequestT, SrvResponseT]):
     async def _responses(self):
         """Async generator yielding (header, response) from DDS."""
         self._wakeup = await WakeupSocket.create(self._read_event)
-        if self._destroyed:
-            # Destroyed while the socket was opening.
-            self._wakeup.close()
-            self._wakeup = None
-            return
         self.handle.set_on_new_response_wakeup(self._wakeup.fileno())
         while not self._destroyed:
             header_and_response = self.handle.take_response(
